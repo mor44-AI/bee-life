@@ -1,6 +1,5 @@
-// Original procedural score. No media files or network requests are needed.
+// Procedural sound effects. The opening music lives in public/video/intro.mp4.
 const STORAGE_KEY = 'vida-de-abelha.audio.v1'
-const MELODY = [0, 4, 7, 12, 9, 7, 4, 2, 0, 4, 9, 12, 14, 12, 7, 4]
 
 export default class AudioSystem {
   constructor({ storage, AudioContext } = {}) {
@@ -10,7 +9,6 @@ export default class AudioSystem {
     this.volume = 0.45
     this.effectsEnabled = true
     this.context = null
-    this.intro = false
     this.paused = false
     this.notes = new Set()
     try {
@@ -38,44 +36,34 @@ export default class AudioSystem {
       if (!this.context) {
         this.context = new this.Context()
         this.master = this.context.createGain()
-        this.master.gain.value = this.volume
+        this.master.gain.value = this.outputGain()
         this.master.connect(this.context.destination)
-        this.music = this.context.createGain()
-        this.music.gain.value = this.muted ? 0 : 1
-        this.music.connect(this.master)
-        this.nextNote = this.context.currentTime
       }
       if (!this.paused && this.context.state !== 'running') await this.context.resume()
       return this.context.state === 'running'
     } catch { return false }
   }
 
+  outputGain() { return this.muted ? 0 : this.volume }
+  applyGain() {
+    if (this.context) this.master.gain.setTargetAtTime(this.outputGain(), this.context.currentTime, 0.08)
+  }
   setMuted(value) {
     this.muted = Boolean(value)
-    if (this.context) this.music.gain.setTargetAtTime(this.muted ? 0 : 1, this.context.currentTime, 0.08)
+    this.applyGain()
     this.persist()
   }
   toggleMuted() { this.setMuted(!this.muted) }
   setVolume(value) {
     if (!Number.isFinite(value)) return
     this.volume = Math.max(0, Math.min(1, value))
-    if (this.context) this.master.gain.setTargetAtTime(this.volume, this.context.currentTime, 0.08)
+    this.applyGain()
     this.persist()
   }
   setEffectsEnabled(value) { this.effectsEnabled = Boolean(value); this.persist() }
 
-  startIntro() {
-    this.intro = true
-    this.step = 0
-    this.nextNote = this.context?.currentTime ?? 0
-  }
-  stopIntro() {
-    this.intro = false
-    this.stopNotes('music')
-  }
-  stopNotes(kind) {
+  stopNotes() {
     for (const note of this.notes) {
-      if (kind && note.kind !== kind) continue
       try { note.osc.stop() } catch { /* Already ended. */ }
       note.osc.disconnect()
       note.envelope.disconnect()
@@ -83,7 +71,7 @@ export default class AudioSystem {
     }
   }
 
-  tone(midi, start, duration, level, kind = 'music') {
+  tone(midi, start, duration, level) {
     const ctx = this.context
     if (!ctx || ctx.state !== 'running') return
     const osc = ctx.createOscillator()
@@ -94,8 +82,8 @@ export default class AudioSystem {
     envelope.gain.linearRampToValueAtTime(level, start + 0.06)
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
     osc.connect(envelope)
-    envelope.connect(kind === 'music' ? this.music : this.master)
-    const note = { osc, envelope, kind }
+    envelope.connect(this.master)
+    const note = { osc, envelope }
     this.notes.add(note)
     osc.onended = () => {
       osc.disconnect()
@@ -106,32 +94,16 @@ export default class AudioSystem {
     osc.stop(start + duration + 0.02)
   }
 
-  update() {
-    if (!this.intro || this.paused || this.context?.state !== 'running') return
-    const now = this.context.currentTime
-    if (this.nextNote < now - 0.2) this.nextNote = now
-    while (this.nextNote < now + 0.15) {
-      const step = this.step++
-      this.tone(60 + MELODY[step % MELODY.length], this.nextNote, 1.4, 0.13)
-      if (step % 4 === 0) {
-        const root = [48, 45, 53, 55][Math.floor(step / 4) % 4]
-        this.tone(root, this.nextNote, 2.9, 0.1)
-        this.tone(root + 7, this.nextNote, 2.6, 0.045)
-      }
-      this.nextNote += 0.66
-    }
-  }
-
   playResult(score = 0.5) {
     if (!this.effectsEnabled || this.paused || this.context?.state !== 'running') return
     const now = this.context.currentTime
     const notes = score >= 0.5 ? [67, 72, 76] : [64, 62, 60]
-    notes.forEach((midi, i) => this.tone(midi, now + i * 0.12, 0.55, 0.13, 'effect'))
+    notes.forEach((midi, i) => this.tone(midi, now + i * 0.12, 0.55, 0.13))
   }
   playPromotion() {
     if (!this.effectsEnabled || this.paused || this.context?.state !== 'running') return
     const now = this.context.currentTime
-    ;[60, 64, 67, 72].forEach((midi, i) => this.tone(midi, now + i * 0.14, 0.9, 0.13, 'effect'))
+    ;[60, 64, 67, 72].forEach((midi, i) => this.tone(midi, now + i * 0.14, 0.9, 0.13))
   }
   suspend() {
     this.paused = true
@@ -140,12 +112,10 @@ export default class AudioSystem {
   }
   resume() {
     this.paused = false
-    this.nextNote = this.context?.currentTime ?? 0
     if (this.context) return this.unlock()
     return Promise.resolve(false)
   }
   dispose() {
-    this.stopIntro()
     this.stopNotes()
     try { this.context?.close()?.catch(() => {}) } catch { /* Already closed. */ }
     this.context = null

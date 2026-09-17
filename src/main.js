@@ -50,7 +50,6 @@ const loop = createLoop({
       context.layout = getLayout(renderer.width, renderer.height)
     controls.update(dt, context.layout)
     machine.update(dt)
-    audio.update(dt)
     input.endFrame()
   },
   render() {

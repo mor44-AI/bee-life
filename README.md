@@ -18,6 +18,7 @@ No celular, use arraste e os controles na tela. A limpeza mantém a dica textual
 - A dificuldade começa em 0,57 em cada fase e aumenta nos turnos seguintes.
 - A pontuação afeta a colônia, mas não antecipa nem atrasa a promoção.
 - O nascimento é uma animação de abertura, não uma quinta fase com turnos.
+- Abertura em vídeo: `public/video/intro.mp4` (vertical 720×1280, com som; poster `public/video/intro-poster.jpg`). Toca após "Toque/Clique para começar" só na primeira visita (flag `vida-de-abelha.intro-seen.v1` no localStorage); "Ver abertura" no menu reabre. Sem o arquivo, o jogo abre direto no menu.
 - A rainha oferece janelas de alimentação mais frequentes; o especial foi preservado.
 - Salvamento local automático ao nascer e ao concluir cada turno. Recarregar durante um turno retoma o último ponto salvo, sem contabilizar o turno incompleto.
 

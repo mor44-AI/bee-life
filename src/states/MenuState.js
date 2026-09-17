@@ -3,6 +3,7 @@
 // empilhados na metade inferior (zona do polegar). Em tela larga: título e botões
 // numa coluna à esquerda, prancha à direita.
 // Toque/clique ativa; teclado (setas + Enter, Esc volta) continua funcionando no PC.
+// "Ver abertura" (link discreto, mesmo alvo de toque ≥ 56px) reabre o vídeo de abertura.
 // "Continuar" fica visualmente desabilitado sem save. "Novo Jogo" com save existente
 // pede confirmação de sobrescrita. Configurações de áudio persistentes.
 
@@ -36,6 +37,7 @@ function mainItems() {
     { id: 'new', label: 'Novo Jogo' },
     { id: 'continue', label: 'Continuar', disabled: !hasSave, caption: hasSave ? '' : 'nenhuma vida registrada' },
     { id: 'settings', label: 'Configurações' },
+    { id: 'replay', label: 'Ver abertura', discreet: true },
   ]
 }
 
@@ -47,7 +49,8 @@ function computeLayout(context) {
   const wide = S.w >= 720 && S.w > S.h * 1.1
   const btnH = Math.max(minTouch, Math.round(62 * u))
   const gap = Math.round(14 * u)
-  const stackH = btnH * 3 + gap * 2
+  const linkH = minTouch
+  const stackH = btnH * 3 + gap * 2 + linkH
   let plate, titleX, titleY, titleSize, align, btnX, btnY0, btnW
 
   if (wide) {
@@ -78,7 +81,12 @@ function computeLayout(context) {
     const R = Math.max(40, Math.min(S.w * 0.3, avail / 2.6))
     plate = { cx: S.x + S.w / 2, cy: plateTop + avail / 2 + R * 0.08, R }
   }
-  const buttons = mainItems().map((item, i) => ({ ...item, rect: { x: btnX, y: btnY0 + i * (btnH + gap), w: btnW, h: btnH } }))
+  const buttons = mainItems().map((item, i) => {
+    const y = btnY0 + i * (btnH + gap)
+    // Link discreto logo abaixo da pilha, sem o espaçamento extra dos botões.
+    if (item.discreet) return { ...item, rect: { x: btnX + btnW * 0.2, y: y - gap, w: btnW * 0.6, h: linkH } }
+    return { ...item, rect: { x: btnX, y, w: btnW, h: btnH } }
+  })
 
   // Modal
   const cardW = Math.min(460, S.w - 32)
@@ -125,8 +133,8 @@ function computeLayout(context) {
     const audio = context.audio
     const rowGap = 8
     const headingH = 54
-    const rowH = Math.max(44, Math.min(56, (S.h - 72 - headingH - 4 * rowGap) / 5))
-    card.h = headingH + 5 * rowH + 4 * rowGap + 32
+    const rowH = Math.max(44, Math.min(56, (S.h - 72 - headingH - 3 * rowGap) / 4))
+    card.h = headingH + 4 * rowH + 3 * rowGap + 32
     card.y = S.y + (S.h - card.h) / 2
     const x = card.x + 16
     const y = card.y + headingH
@@ -134,12 +142,11 @@ function computeLayout(context) {
     const rect = row => ({ x, y: y + row * (rowH + rowGap), w, h: rowH })
     const volume = Math.round((audio?.volume ?? 0.45) * 100)
     modalButtons = [
-      { id: 'music', label: `Música: ${audio?.muted ? 'desligada' : 'ligada'}`, rect: rect(0) },
+      { id: 'music', label: `Som: ${audio?.muted ? 'desligado' : 'ligado'}`, rect: rect(0) },
       { id: 'quieter', label: 'Volume -', rect: { ...rect(1), w: (w - rowGap) / 2 } },
       { id: 'louder', label: `${volume}% +`, rect: { ...rect(1), x: x + (w + rowGap) / 2, w: (w - rowGap) / 2 } },
       { id: 'effects', label: `Efeitos: ${audio?.effectsEnabled === false ? 'desligados' : 'ligados'}`, rect: rect(2) },
-      { id: 'replay', label: 'Rever abertura', rect: rect(3) },
-      { id: 'back', label: 'Voltar', rect: rect(4) },
+      { id: 'back', label: 'Voltar', rect: rect(3) },
     ]
     if (S.h < 390 && S.w >= 540) {
       card.w = Math.min(620, S.w - 32)
@@ -203,7 +210,7 @@ function activate(context, id) {
       if (context.audio?.effectsEnabled) context.audio.playResult(1)
       break
     case 'replay':
-      context.goTo?.('intro')
+      context.goTo?.('intro', { replay: true })
       break
     case 'confirmNew':
       mode = 'main'
@@ -313,6 +320,10 @@ export default {
     const inMain = mode === 'main'
     const touch = isTouchUI(context)
     M.buttons.forEach((b, i) => {
+      if (b.discreet) {
+        drawLink(ctx, b.rect, b.label, u, inMain && !touch && i === selected)
+        return
+      }
       drawButton(ctx, b.rect, b.label, {
         // No toque não há "foco" de teclado: destaca só o botão principal.
         focused: inMain && (touch ? i === (hasSave ? 1 : 0) : i === selected),
@@ -329,6 +340,21 @@ export default {
   },
 
   exit() {},
+}
+
+function drawLink(ctx, rect, label, u, focused) {
+  const cx = rect.x + rect.w / 2
+  const cy = rect.y + rect.h / 2
+  ctx.save()
+  ctx.fillStyle = UI.ink
+  ctx.globalAlpha = focused ? 0.95 : 0.7
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = font(16 * u, { style: 'italic' })
+  ctx.fillText(label, cx, cy)
+  const tw = ctx.measureText(label).width
+  ctx.restore()
+  drawGuideLine(ctx, cx - tw / 2, cy + 12 * u, cx + tw / 2, cy + 12 * u, { alpha: focused ? 0.6 : 0.3 })
 }
 
 function drawPlate(ctx, plate, time, u) {

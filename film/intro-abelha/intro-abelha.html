@@ -1,0 +1,498 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Vida de Abelha - intro</title>
+<style>
+  body{margin:0;background:#111;color:#ccc;font:13px/1.4 ui-monospace,Menlo,monospace;display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px}
+  canvas#c{width:auto;height:min(80vh,1280px);background:#000;box-shadow:0 0 0 1px #333}
+  .bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;justify-content:center}
+  button{background:#222;color:#ddd;border:1px solid #444;padding:4px 10px;cursor:pointer;font:inherit}
+  input[type=range]{width:320px}
+</style>
+<canvas id="c" width="1080" height="1920"></canvas>
+<script src="core.js"></script>
+<script>
+'use strict';
+// ===================== BRIEF =====================
+// Subject: um dia (uma vida) de uma operaria de Mandacaia, Melipona quadrifasciata, abelha sem ferrao:
+//          nasce no favo, coleta nectar numa quaresmeira, alimenta a rainha fisogastrica, defende a entrada.
+// Format: 9:16, short side 1080 logical units (1080x1920), drawn 12 fps, output 24 fps, 30 s.
+// Look: riso (cream stock, fluorescent pink + sunflower + blue inks, halftone dots, crayon lines,
+//       misregistered two-ink accents). Interior da colmeia = night (brown stock) with the same inks.
+// Palette: MANDA = makePalette({...}, 'risoPop'): honey, sage, fluo pink, bee-dark, cerume, wax, blue, moss.
+// Anchor: a operaria (ovo -> larva -> pupa -> abelha). She is at or near frame centre in every shot.
+// Puppets: drawBee (walk, wing, flap, tongue, pale, load, jaw, twitch, tuck, queen, pupa), drawAnt (walk), drawFly (flap).
+//
+// ===================== BEAT SHEET =====================
+// t      dur   scene         look   camera            what changes                                    kit                                   sound
+// 0.00   1.50  ovo           riso   static            egg dot, crayon ripples, iris opens on comb      seedDot crayon iris                   celesta plucks per ripple
+// 1.50   1.25  favo          riso   push-in 1.0->1.9  brood comb top view, pink ring on centre cell    cached comb, dashedRing, seedDot      pad A/E
+// 2.75   2.25  dentro        night  static            cell cut open: egg | larva | pupa (hard cuts)    construction, dotScreen, drawBee pupa 55 Hz swell + bell per stage
+// 5.00   2.00  eclosao       riso   zoom 2.0          cap cracks, pale young bee climbs out            selfDraw cracks, clip, crayon ripples  rising arpeggio, pop, sparkle
+// 7.00   1.50  saida         riso   zoom 1.3          geopropolis entrance with rays, bee out, flies   cached entrance, speedLines, loops    buzz + travel arpeggio
+// 8.50   2.00  voo           riso   scroll (follow)   top-down field, trees, river, flower ahead       tall cached layer, dot shadow, loops  travel arpeggio
+// 10.50  2.25  nectar        riso   push-in 1.0->1.12 quaresmeira, tongue in, droplets, abdomen fills  dotScreen radial, stamens, pollen     droplet blips
+// 12.75  1.25  volta         riso   zoom 1.3          laden bee back into the hole, ink blot wipe      blot                                  descending run, whoosh
+// 14.00  1.75  corte         night  wide              hive chamber, pots, queen + court, bee walks in  cached interior, dashedRing           regal pad
+// 15.75  1.75  rainha        night  zoom 1.55         bee reaches the physogastric queen               court bob pulse                       bell melody
+// 17.50  2.00  trofalaxia    night  zoom 2.7          tongue out, honey drops mouth to mouth           ripples, droplets                     droplet blips, shimmer
+// 19.50  1.50  gota          night  zoom 1.15         queen glows, sparks, scribble on her abdomen     dotBurst, scribble                    sparkle cluster
+// 21.00  1.50  formigas      riso   wide              guard in entrance, ant column climbs trail       bezier walkers                        staccato march
+// 22.50  1.50  mordida       riso   zoom 1.9          bite: flash, lead ant flung, others retreat     flash (1 frame), speedLines, rings    impact
+// 24.00  1.50  mosca         riso   wide              phorid fly zigzags in, guards raise wings        drawFly ghost wings                   buzz
+// 25.50  1.50  perseguicao   riso   soft follow       guard chases fly off, returns hovering           speedLines, loops                     chase run, resolve
+// 27.00  3.00  assinatura    riso   static            hand-lettered "Vida de Abelha", bee hovers        signOff, ripples                      sine dyad
+// Transitions: iris (ovo->favo), ink blot (volta->corte), one flash (mordida). Everything else hard cuts.
+
+// ===================== PALETTE =====================
+const MANDA = makePalette({
+  paper: '#f1e8d2', paperBand: null, ink: '#2b2118', night: '#33241a', chalk: '#f6e2a4', chalkDim: '#a98d5e', guide: 'rgba(43,33,24,.45)',
+  //       honey      sage       fluo pink  bee dark   cerume     wax        blue       moss
+  fills: ['#ffb511', '#8fae7e', '#ff48b0', '#33251a', '#b06a34', '#efcf82', '#3f7fbf', '#4f7355'],
+  shade: '#2b2118', light: '#fff5d8', blush: '#ff48b0',
+  accents: ['#ff48b0', '#ffb511', '#8fae7e', '#3f7fbf'],
+  inks: ['#ffb511', '#ff48b0', '#3f7fbf', '#2b2118'], finish: 'riso',
+}, 'risoPop');
+usePalette(MANDA);
+const FI = { honey: 0, sage: 1, pink: 2, body: 3, cerume: 4, wax: 5, blue: 6, moss: 7 };
+const col = k => PAL.fills[FI[k]];
+// multiply-printed halftone: the riso overprint, paper shows between dots
+function dots(c, path, box, color, density, seed, o = {}) { c.save(); c.globalCompositeOperation = 'multiply'; dotScreen(c, path, box, { cell: o.cell ?? 7, color, density, angle: o.angle ?? .26, jitter: o.jitter ?? .3, seed, alpha: o.alpha ?? .95 }); c.restore(); }
+function camC(c, x, y, z) { const hw = W / (2 * z), hh = H / (2 * z); cam(c, z >= 1 ? clamp(x, hw, W - hw) : CX, z >= 1 ? clamp(y, hh, H - hh) : CY, z); }   // keep a cached W x H set filling the frame
+const at = (fn, off) => (c, tau, i) => fn(c, tau + off, i);
+const cache = {};
+function cached(key, draw) { if (!cache[key]) { const L = layer(); const g = L.getContext('2d'); resetT(g); draw(g); cache[key] = L; } return cache[key]; }
+function drawCached(c, L) { c.drawImage(L, 0, 0, W, H); }   // under the current camera transform
+
+// ===================== PUPPETS =====================
+// Worker bee, dorsal view, local coords, origin at thorax/abdomen joint area, facing up (-y). ~240 units antenna to sting-less tip.
+const BEE = { head: [0, -64, 31, 25], thorax: [0, -20, 37, 32], abd: [0, 50, 41, 52], qabd: [0, 128, 76, 128] };
+function wingGeo(side, spread, hind, k = 1) {
+  const th = hind ? lerp(.32, 1.6, spread) : lerp(.1, 1.25, spread), len = (hind ? 84 : 122) * k, wid = (hind ? 30 : 40) * k;
+  const bx = side * (hind ? 14 : 20), by = hind ? -8 : -26, dx = side * Math.sin(th), dy = Math.cos(th);
+  return [bx + dx * len / 2, by + dy * len / 2, wid / 2, len / 2, -side * th];
+}
+function drawBee(c, mode, p = {}, seed = 1) {
+  const bp = mode === 'blueprint', line = bp ? PAL.chalk : PAL.ink, pupa = p.pupa || 0, pale = p.pale || 0, load = p.load || 0, queen = !!p.queen;
+  const bodyC = pupa ? mix(PAL.light, col('wax'), .35) : mix(col('body'), col('wax'), pale * .5);
+  const bandC = pupa ? mix(PAL.light, col('wax'), .75) : mix(col('honey'), PAL.light, pale * .45);
+  c.save(); c.lineJoin = 'round'; c.lineCap = 'round';
+  // legs
+  const w = p.walk || 0, tuck = Math.max(p.tuck || 0, pupa);
+  for (const side of [-1, 1]) for (let k = 0; k < 3; k++) {
+    const ph = Math.sin(w * TAU + k * 2.1 + (side > 0 ? Math.PI : 0)) * 9, ay = -34 + k * 14, ax = side * 26;
+    let knee = k === 0 ? [side * 56, -48 + ph] : k === 1 ? [side * 70, -22 + ph] : [side * 62, 12 + ph];
+    let foot = k === 0 ? [side * 64, -80 + ph] : k === 1 ? [side * 88, 4 + ph] : [side * 70, 62 + ph];
+    knee = [lerp(knee[0], side * 42, tuck), lerp(knee[1], ay + 16, tuck)]; foot = [lerp(foot[0], side * 36, tuck), lerp(foot[1], ay + 46, tuck)];
+    c.strokeStyle = line; c.lineWidth = bp ? 2.4 : (k === 2 ? 8 : 5.5); wob(c, [[ax, ay], knee, foot], 1.4, seed + 10 + k * 2 + side);
+    if (!bp && k === 2 && !pupa) { // broad hind tibia (corbicula) and pollen load
+      c.lineWidth = 15; c.strokeStyle = bodyC; wob(c, [lerp2(knee, foot, .25), lerp2(knee, foot, .8)], 1, seed + 20 + side);
+      if (load > .05) { const m = lerp2(knee, foot, .55); c.fillStyle = col('honey'); c.beginPath(); c.arc(m[0] + side * 3, m[1], 12 * load, 0, TAU); c.fill(); c.strokeStyle = line; c.lineWidth = 2; c.stroke(); }
+      c.fillStyle = col('honey'); c.beginPath(); c.arc(foot[0], foot[1], 3.5, 0, TAU); c.fill();
+    }
+  }
+  // abdomen
+  const A = queen ? BEE.qabd : [BEE.abd[0], BEE.abd[1] + 8 * load, BEE.abd[2] + 6 * load, BEE.abd[3] + 8 * load];
+  const abd = ellPath(...A), abox = [A[0] - A[2], A[1] - A[3], A[2] * 2, A[3] * 2];
+  if (!bp) {
+    c.fillStyle = queen ? mix(PAL.light, col('wax'), .55) : bodyC; c.fill(abd);
+    c.save(); c.clip(abd);
+    if (queen) { for (let j = 0; j < 6; j++) { const y = 18 + j * 42; c.strokeStyle = col('body'); c.lineWidth = 8; bandStroke(c, y, 96); c.strokeStyle = col('honey'); c.lineWidth = 4; bandStroke(c, y + 8, 96); } }
+    else { c.strokeStyle = bandC; c.lineWidth = 10; for (let j = 0; j < 4; j++) bandStroke(c, A[1] - A[3] + (A[3] * 2) * (.2 + j * .19), 60); }
+    c.restore();
+    dots(c, abd, abox, queen ? col('cerume') : PAL.shade, queen ? .16 : .22, seed + 30, { cell: 6 });
+  }
+  crayon(c, ellPts(...A, 0, 40), line, bp ? 2 : 2.8, seed + 31, true);
+  // thorax + head
+  for (const [k, box] of [['thorax', [-38, -53, 76, 66]], ['head', [-32, -90, 64, 52]]]) {
+    const P = ellPath(...BEE[k]);
+    if (!bp) { c.fillStyle = bodyC; c.fill(P); dots(c, P, box, pupa ? col('wax') : col('honey'), k === 'thorax' ? .3 : .16, seed + 40 + k.length, { cell: 5, angle: 1.31 }); }
+    crayon(c, ellPts(...BEE[k], 0, 36), line, bp ? 2 : 2.8, seed + 45 + k.length, true);
+  }
+  // eyes
+  for (const s of [-1, 1]) {
+    const E = [s * 24, -64, 11, 19, -s * .28], P = ellPath(...E);
+    if (!bp) { c.fillStyle = pupa ? col('pink') : PAL.ink; c.fill(P); if (!pupa) dots(c, P, [s * 24 - 12, -84, 24, 40], col('blue'), .35, seed + 50 + s, { cell: 4 }); c.fillStyle = PAL.light; c.beginPath(); c.arc(s * 21, -72, 3.2, 0, TAU); c.fill(); }
+    else { c.strokeStyle = line; c.lineWidth = 1.8; wob(c, ellPts(...E, 24), 1, seed + 52 + s, true); }
+  }
+  // antennae, mandibles, tongue
+  const tw = p.twitch || 0;
+  c.strokeStyle = line; c.lineWidth = bp ? 2 : 4.5;
+  for (const s of [-1, 1]) wob(c, [[s * 8, -86], [s * 14, -116 + tw * 3], [s * (34 + tw * 6), -132 - tw * 8 * (s > 0 ? 1 : .4)]], 1, seed + 60 + s);
+  if (!pupa) {
+    const jaw = p.jaw || 0; c.strokeStyle = bp ? line : shade(col('honey'), .25); c.lineWidth = 4.5;
+    for (const s of [-1, 1]) wob(c, [[s * 9, -86], [s * (8 + jaw * 12), -97 - jaw * 4], [s * (2 + jaw * 12), -103 - jaw * 6]], .8, seed + 65 + s);
+    if (p.tongue > 0) { c.strokeStyle = shade(col('honey'), .2); c.lineWidth = 5; wob(c, [[0, -88], [0, -88 - 70 * p.tongue]], .8, seed + 68); c.fillStyle = col('honey'); c.beginPath(); c.arc(0, -90 - 70 * p.tongue, 4, 0, TAU); c.fill(); }
+  }
+  // wings (translucent, on top), ghosts when flapping
+  const wingK = pupa ? .42 : 1, spread = p.wing || 0;
+  const offs = p.flap != null ? [-.35 + p.flap * .5, .2 + p.flap * .2] : [0];
+  for (const side of [-1, 1]) for (const hind of [true, false]) for (const o of offs) {
+    const g = wingGeo(side, clamp(spread + o, 0, 1.3), hind, wingK), pts = ellPts(...g, 32), P = ellPath(...g);
+    c.save(); c.globalAlpha = offs.length > 1 ? .6 : 1;
+    if (!bp) { c.fillStyle = alpha(PAL.light, .5); c.fill(P); dots(c, P, [g[0] - g[3], g[1] - g[3], g[3] * 2, g[3] * 2], col('blue'), .07, seed + 70, { cell: 5 }); }
+    c.strokeStyle = line; c.lineWidth = bp ? 1.4 : 2; wob(c, pts, 1.2, seed + 72 + (hind ? 1 : 0) + side, true);
+    if (!hind && !pupa) { c.lineWidth = 1.2; c.globalAlpha *= .6; wob(c, [pts[0], [g[0], g[1]], pts[16]], 1, seed + 75 + side); }
+    c.restore();
+  }
+  if (!bp && p.scribble) scribble(c, abd, A[0], A[1], { seed: seed + 80, amp: 6, alpha: .6, width: 2.2, colors: [col('pink'), col('honey')] });
+  c.restore();
+}
+function lerp2(a, b, t) { return [lerp(a[0], b[0], t), lerp(a[1], b[1], t)]; }
+function bandStroke(c, y, hw) { c.beginPath(); c.moveTo(-hw, y - 6); c.quadraticCurveTo(0, y + 10, hw, y - 6); c.stroke(); }
+function placeBee(c, x, y, rot, s, mode, pose, seed) { c.save(); c.translate(x, y); c.rotate(rot); c.scale(s, s); drawBee(c, mode, pose, seed); c.restore(); }
+
+// Ant, dorsal, facing up, ~110 units long
+function drawAnt(c, p = {}, seed = 1) {
+  const body = mix(col('cerume'), PAL.ink, .45), w = p.walk || 0; c.save(); c.lineCap = 'round'; c.lineJoin = 'round';
+  c.strokeStyle = PAL.ink; c.lineWidth = 3.5;
+  for (const s of [-1, 1]) for (let k = 0; k < 3; k++) { const ph = Math.sin(w * TAU + k * 2.2 + (s > 0 ? Math.PI : 0)) * 8, y = -18 + k * 8;
+    wob(c, [[s * 5, y], [s * 26, y - 14 + k * 12 + ph], [s * 36, y - 26 + k * 26 + ph]], 1, seed + k * 3 + s); }
+  for (const s of [-1, 1]) wob(c, [[s * 5, -50], [s * 10, -70], [s * 26, -84]], 1, seed + 20 + s);
+  const parts = [[[0, 30, 19, 24], .3], [[0, 6, 6, 6], 0], [[0, -16, 8, 16], .2], [[0, -42, 15, 14], .2]];
+  parts.forEach(([E, d], k) => { const P = ellPath(...E); c.fillStyle = body; c.fill(P); if (d) dots(c, P, [E[0] - E[2], E[1] - E[3], E[2] * 2, E[3] * 2], PAL.ink, d, seed + 30 + k, { cell: 5 }); crayon(c, ellPts(...E, 0, 24), PAL.ink, 2, seed + 40 + k, true); });
+  c.strokeStyle = col('honey'); c.lineWidth = 3; for (const s of [-1, 1]) wob(c, [[s * 6, -54], [s * 3, -62]], .5, seed + 50 + s);
+  c.restore();
+}
+// Phorid fly (mosca forideo), dorsal, humpbacked, ~100 units
+function drawFly(c, p = {}, seed = 1) {
+  const body = mix(PAL.ink, col('cerume'), .3); c.save(); c.lineCap = 'round'; c.lineJoin = 'round';
+  c.strokeStyle = PAL.ink; c.lineWidth = 3;
+  for (const s of [-1, 1]) for (let k = 0; k < 3; k++) wob(c, [[s * 8, -10 + k * 8], [s * 34, -18 + k * 20], [s * 44, -8 + k * 34]], 1, seed + k + s * 5);
+  for (const [E, d] of [[[0, 26, 13, 22], .25], [[0, -6, 18, 17], .35], [[0, -28, 12, 9], .2]]) { const P = ellPath(...E); c.fillStyle = body; c.fill(P); dots(c, P, [E[0] - E[2], E[1] - E[3], E[2] * 2, E[3] * 2], col('honey'), d, seed + 10, { cell: 4 }); crayon(c, ellPts(...E, 0, 24), PAL.ink, 2, seed + 12 + E[1], true); }
+  for (const s of [-1, 1]) { c.fillStyle = col('pink'); c.beginPath(); c.ellipse(s * 8, -30, 5, 6, 0, 0, TAU); c.fill(); }
+  const offs = p.flap != null ? [-.3 + p.flap * .4, .25] : [0];
+  for (const s of [-1, 1]) for (const o of offs) { const th = .55 + o, len = 72, g = [s * 8 + s * Math.sin(th) * len / 2, -8 + Math.cos(th) * len / 2, 16, len / 2, -s * th];
+    c.save(); c.globalAlpha = offs.length > 1 ? .55 : 1; c.fillStyle = alpha(PAL.light, .55); c.fill(ellPath(...g)); c.strokeStyle = PAL.ink; c.lineWidth = 1.6; wob(c, ellPts(...g, 28), 1, seed + 30 + s, true); c.restore(); }
+  c.restore();
+}
+
+// ===================== SETS (cached, static) =====================
+const HEX = 70, HEXW = Math.sqrt(3) * HEX, HEXH = 1.5 * HEX;
+function combCells() { const out = []; for (let r = -12; r <= 12; r++) for (let q = -7; q <= 7; q++) { const x = CX + (q + (Math.abs(r) % 2) / 2) * HEXW, y = CY + r * HEXH; if (x > -120 && x < W + 120 && y > -120 && y < H + 120) out.push([x, y, r, q]); } return out; }
+function combSet(g) {
+  paper(g); const all = rectPath(-200, -200, W + 400, H + 400);
+  dots(g, all, [-200, -200, W + 400, H + 400], col('cerume'), .72, 101, { cell: 8 });
+  dots(g, all, [-200, -200, W + 400, H + 400], PAL.ink, .35, 102, { cell: 8, angle: 1.31 });
+  const r = rng(103), caps = new Path2D(), open = [];
+  for (const [x, y, rr, q] of combCells()) { if (!(rr === 0 && q === 0) && r() < .06) { open.push([x, y]); continue; } caps.ellipse(x, y, 58, 56, 0, 0, TAU); caps.closePath(); }
+  g.fillStyle = col('wax'); g.fill(caps);
+  dots(g, caps, [-200, -200, W + 400, H + 400], col('honey'), .45, 104, { cell: 7, angle: 1.31 });
+  dots(g, caps, [-200, -200, W + 400, H + 400], col('cerume'), (x, y) => .12 + .25 * (.5 + .5 * Math.sin(x / 90 + y / 140)), 105, { cell: 7 });
+  let s = 110; for (const [x, y, rr, q] of combCells()) { if (open.some(o => o[0] === x && o[1] === y)) { g.fillStyle = PAL.ink; g.beginPath(); g.ellipse(x, y, 46, 44, 0, 0, TAU); g.fill(); crayon(g, ellPts(x, y, 56, 54, 0, 30), shade(col('cerume'), .3), 6, s++, true); continue; }
+    crayon(g, ellPts(x, y, 58, 56, 0, 30), shade(col('cerume'), .35), 3, s++, true); }
+}
+const EX = () => CX, EY = () => CY;
+function entranceSet(g) {
+  paper(g); const all = rectPath(0, 0, W, H), box = [0, 0, W, H];
+  dots(g, all, box, col('cerume'), (x, y) => .38 + .18 * Math.sin(x / 55) * Math.sin(y / 300 + x / 400), 201, { cell: 8 });
+  dots(g, all, box, col('moss'), (x, y) => clamp(Math.sin(x / 210 + 1) * Math.sin(y / 260) - .25, 0, 1) * .7, 202, { cell: 8, angle: 1.31 });
+  const r = rng(203); for (let k = 0; k < 46; k++) { const x = r() * W, pts = []; let px = x; for (let y = -20; y <= H + 20; y += 60) { px += (r() - .5) * 18; pts.push([px, y]); } crayon(g, pts, shade(col('cerume'), .45), 2 + r() * 3, 204 + k); }
+  // geopropolis mound with converging rays
+  const ex = EX(), ey = EY(), mound = [];
+  for (let k = 0; k < 60; k++) { const a = k / 60 * TAU, R = 300 * (1 + .09 * Math.sin(a * 5 + 1) + (r() - .5) * .07); mound.push([ex + Math.cos(a) * R, ey + Math.sin(a) * R * 1.12]); }
+  const M = polyPath(mound); g.fillStyle = mix(col('cerume'), PAL.paper, .15); g.fill(M);
+  dots(g, M, [ex - 360, ey - 380, 720, 760], PAL.ink, (x, y) => .12 + .35 * clamp(Math.hypot(x - ex, y - ey) / 330, 0, 1), 205, { cell: 6 });
+  dots(g, M, [ex - 360, ey - 380, 720, 760], col('honey'), .22, 206, { cell: 6, angle: 1.31 });
+  crayon(g, mound, PAL.ink, 4, 207, true);
+  for (let k = 0; k < 30; k++) { const a = k / 30 * TAU + (r() - .5) * .08, R0 = 58, R1 = 270 * (.82 + r() * .16), pts = []; for (let u = 0; u <= 6; u++) { const R = lerp(R0, R1, u / 6), aa = a + Math.sin(u * 1.3 + k) * .03; pts.push([ex + Math.cos(aa) * R, ey + Math.sin(aa) * R * 1.12]); }
+    crayon(g, pts, shade(col('cerume'), .5), 5, 210 + k); g.save(); g.translate(4, -3); crayon(g, pts.slice(0, 5), alpha(PAL.light, .7), 2, 250 + k); g.restore(); }
+  const hole = ellPath(ex, ey, 44, 40); g.fillStyle = PAL.ink; g.fill(hole); crayon(g, ellPts(ex, ey, 50, 46, 0, 36), shade(col('cerume'), .6), 7, 290, true);
+}
+function interiorSet(g) {
+  night(g, PAL.night, 301); const r = rng(302), box = [0, 0, W, H];
+  dots(g, rectPath(0, 0, W, H), box, col('cerume'), (x, y) => .25 + .2 * Math.sin(x / 160 + y / 210), 303, { cell: 9, alpha: .5 });
+  for (let k = 0; k < 9; k++) { const R = 420 + k * 120; g.save(); g.setLineDash([28, 18]); crayon(g, ellPts(CX, CY - 180, R, R * 1.05, 0, 90).filter((_, j) => (j + k * 7) % 90 < 55), alpha(col('wax'), .35), 4, 304 + k); g.restore(); }
+  const pots = [[-400, -760, 92, 'honey'], [-250, -870, 70, 'wax'], [380, -780, 100, 'honey'], [210, -900, 64, 'honey'], [-430, 120, 88, 'wax'], [-420, 470, 104, 'honey'], [-250, 700, 76, 'honey'], [420, 180, 92, 'honey'], [410, 560, 80, 'wax'], [250, 760, 96, 'honey'], [-470, -330, 70, 'honey'], [470, -300, 76, 'wax']];
+  pots.forEach(([dx, dy, s, kind], k) => { const x = CX + dx, y = CY + dy, E = [x, y, s * .82, s], P = ellPath(...E);
+    g.fillStyle = kind === 'wax' ? col('sage') : col('honey'); g.fill(P);
+    dots(g, P, [x - s, y - s, s * 2, s * 2], col('cerume'), (px, py) => .15 + .5 * clamp((py - y + s * .3) / (s * 1.4), 0, 1), 310 + k, { cell: 6 });
+    dots(g, P, [x - s, y - s, s * 2, s * 2], col('pink'), kind === 'wax' ? 0 : .08, 330 + k, { cell: 6, angle: 1.31 });
+    g.fillStyle = alpha(PAL.light, .75); g.beginPath(); g.ellipse(x - s * .32, y - s * .45, s * .12, s * .26, .4, 0, TAU); g.fill();
+    crayon(g, ellPts(...E, 0, 36), shade(col('cerume'), .45), 5, 350 + k, true); });
+}
+function fieldSet(g, y0) {   // world 3H tall, drawn one H-tall tile at a time (a single dot path over 3H is too big for Canvas)
+  const LH = 3 * H; g.fillStyle = PAL.paper; g.fillRect(0, y0, W, H); grain(g, rectPath(0, y0, W, H), [0, y0, W, H], 1700, shade(PAL.paper, .5), .06, 401 + y0, 1.6);
+  const all = rectPath(0, y0 - 10, W, H + 20), box = [0, y0 - 10, W, H + 20];
+  dots(g, all, box, col('sage'), (x, y) => .45 + .25 * Math.sin(x / 170 + y / 260) * Math.cos(y / 330), 402, { cell: 9 });
+  const river = new Path2D(); for (let y = 0; y <= LH; y += 40) river.lineTo(260 + Math.sin(y / 420) * 180, y); for (let y = LH; y >= 0; y -= 40) river.lineTo(260 + Math.sin(y / 420) * 180 + 120 + Math.sin(y / 190) * 20, y); river.closePath();
+  g.fillStyle = PAL.paper; g.fill(river); dots(g, river, box, col('blue'), .55, 403, { cell: 9, angle: 1.31 });
+  const r = rng(404);
+  for (let k = 0; k < 48; k++) { const x = r() * W, y = r() * LH; if (Math.abs(x - (320 + Math.sin(y / 420) * 180)) < 160) continue; const R = 50 + r() * 90, P = ellPath(x, y, R, R * .95);
+    g.fillStyle = col('moss'); g.globalAlpha = .9; g.fill(P); g.globalAlpha = 1; dots(g, P, [x - R, y - R, R * 2, R * 2], PAL.ink, .3, 410 + k, { cell: 7 }); crayon(g, ellPts(x, y, R, R * .95, 0, 30), shade(col('moss'), .4), 4, 500 + k, true); }
+  for (let k = 0; k < 90; k++) { const x = r() * W, y = r() * LH, cc = r() < .7 ? col('pink') : col('honey'); g.fillStyle = cc; for (let j = 0; j < 5; j++) { g.beginPath(); g.arc(x + Math.cos(j * 1.26) * 9, y + Math.sin(j * 1.26) * 9, 7, 0, TAU); g.fill(); } g.fillStyle = PAL.ink; g.beginPath(); g.arc(x, y, 3.5, 0, TAU); g.fill(); }
+  flower(g, CX + 150, 2380, 230, 600);
+}
+// Quaresmeira (Tibouchina), five broad petals, curved stamens
+function flower(g, x, y, R, seed) {
+  for (let k = 0; k < 5; k++) { const a = k / 5 * TAU - Math.PI / 2 + .2, px = x + Math.cos(a) * R * .55, py = y + Math.sin(a) * R * .55, E = [px, py, R * .42, R * .55, a + Math.PI / 2], P = ellPath(...E);
+    g.fillStyle = col('pink'); g.fill(P);
+    dots(g, P, [px - R * .6, py - R * .6, R * 1.2, R * 1.2], col('blue'), (qx, qy) => clamp(1 - Math.hypot(qx - x, qy - y) / (R * .8), 0, 1) * .8, seed + k, { cell: 7, angle: 1.31 });
+    g.save(); g.clip(P); g.strokeStyle = alpha(shade(col('pink'), .35), .6); g.lineWidth = R / 110; for (let v = -2; v <= 2; v++) wob(g, [[x, y], [px + Math.cos(a + Math.PI / 2) * v * R * .08, py + Math.sin(a + Math.PI / 2) * v * R * .08], [x + Math.cos(a + v * .12) * R, y + Math.sin(a + v * .12) * R]], 2, seed + 20 + k * 5 + v); g.restore();
+    crayon(g, ellPts(...E, 40), shade(col('pink'), .4), R / 50, seed + 40 + k, true); }
+  for (let k = 0; k < 10; k++) { const a = k / 10 * TAU + .3, L = R * (.5 + (k % 2) * .12), pts = [[x, y], [x + Math.cos(a) * L * .6, y + Math.sin(a) * L * .6], [x + Math.cos(a + .35) * L, y + Math.sin(a + .35) * L]];
+    crayon(g, pts, k % 2 ? col('honey') : shade(col('pink'), .3), R / 45, seed + 60 + k); g.fillStyle = k % 2 ? col('honey') : col('wax'); g.beginPath(); g.ellipse(pts[2][0], pts[2][1], R / 22, R / 40, a + .35, 0, TAU); g.fill(); }
+  const Cc = ellPath(x, y, R * .13, R * .13); g.fillStyle = col('wax'); g.fill(Cc); crayon(g, ellPts(x, y, R * .13, R * .13, 0, 24), shade(col('honey'), .4), R / 60, seed + 90, true);
+}
+function nectarSet(g) {
+  paper(g); const all = rectPath(0, 0, W, H), box = [0, 0, W, H];
+  dots(g, all, box, col('sage'), .22, 701, { cell: 8 });
+  const leaves = [[CX - 330, CY - 620, 190, 470, -.5], [CX + 360, CY - 520, 170, 430, .6], [CX - 380, CY + 700, 200, 500, .4], [CX + 330, CY + 760, 180, 470, -.45], [CX + 60, CY + 1000, 150, 380, .05]];
+  leaves.forEach((E, k) => { const P = ellPath(...E); g.fillStyle = col('sage'); g.fill(P); dots(g, P, [E[0] - E[3], E[1] - E[3], E[3] * 2, E[3] * 2], col('moss'), .55, 710 + k, { cell: 8, angle: 1.31 });
+    for (let v = -2; v <= 2; v++) { const pts = []; for (let u = -1; u <= 1.001; u += .1) { const ly = u * E[3] * .95, lx = v * E[2] * .32 * Math.sqrt(1 - u * u); pts.push([E[0] + lx * Math.cos(E[4]) - ly * Math.sin(E[4]), E[1] + lx * Math.sin(E[4]) + ly * Math.cos(E[4])]); } crayon(g, pts, alpha(PAL.light, .75), 2.5, 720 + k * 7 + v); }
+    crayon(g, ellPts(...E, 44), shade(col('moss'), .35), 4, 760 + k, true); });
+  flower(g, CX, CY - 60, 470, 800);
+}
+
+// ===================== SCENES =====================
+const NEST_R = 12;
+function sceneOvo(c, tau, i) {
+  paper(c);
+  for (let b = 0; b * 4 / 12 <= tau; b++) { const r = (tau - b * 4 / 12) * 330; if (r > 10 && r < 1200) crayon(c, ellPts(CX, CY, r, r, 0, Math.max(48, r / 5 | 0)), b % 2 ? col('honey') : col('pink'), 5, 40 + b, true); }
+  const p = sm(.75, 1.5, tau, easeOut), R = 30 + p * 1150;
+  if (p > 0) { iris(c, CX, CY, R, cc => sceneFavo(cc, 0, i)); c.strokeStyle = PAL.ink; c.lineWidth = 4; wob(c, ellPts(CX, CY, R, R, 0, 120), 2.5, 41, true); }
+  seedDot(c, CX, CY, NEST_R + 2);
+}
+function sceneFavo(c, tau, i) {
+  paper(c); cam(c, CX, CY, lerp(1.0, 1.9, sm(0, 1.25, tau)));
+  drawCached(c, cached('comb', combSet));
+  dashedRing(c, CX, CY, 78, col('pink'), 120 + (i >> 1), [16, 10], 5);
+  seedDot(c, CX, CY, NEST_R);
+}
+function sceneDentro(c, tau, i) {
+  night(c, PAL.night, 131); resetT(c);
+  const cx = CX, cy = CY + 60, rx = 300, ry = 560, stage = tau < .75 ? 0 : tau < 1.5 ? 1 : 2;
+  const wall = new Path2D(); wall.ellipse(cx, cy, rx + 60, ry + 60, 0, 0, TAU); wall.ellipse(cx, cy, rx, ry, 0, 0, TAU, true);
+  c.fillStyle = shade(col('cerume'), .2); c.fill(wall); dots(c, wall, [cx - rx - 70, cy - ry - 70, rx * 2 + 140, ry * 2 + 140], col('honey'), .35, 132, { cell: 7, angle: 1.31 });
+  crayon(c, ellPts(cx, cy, rx + 60, ry + 60, 0, 90), col('wax'), 4, 133, true); crayon(c, ellPts(cx, cy, rx, ry, 0, 90), col('wax'), 3, 134, true);
+  // cap on top
+  c.strokeStyle = col('wax'); c.save(); c.setLineDash([10, 12]); wob(c, [[cx - 170, cy - ry + 60], [cx, cy - ry - 30], [cx + 170, cy - ry + 60]], 2, 135); c.restore();
+  const inner = ellPath(cx, cy, rx - 4, ry - 4), level = [cy + 170, cy + 330, cy + 620][stage];
+  c.save(); c.clip(inner); const food = rectPath(cx - rx, level, rx * 2, ry * 2); c.fillStyle = shade(col('honey'), .15); c.fill(food);
+  dots(c, food, [cx - rx, level, rx * 2, ry], col('pink'), .12, 136, { cell: 6 }); c.strokeStyle = col('honey'); c.lineWidth = 4; wob(c, [[cx - rx, level], [cx + rx, level]], 3, 137); c.restore();
+  construction(c, cx, cy, 250, 140 + stage, alpha(PAL.chalk, .45));
+  if (stage === 0) { const E = ellPath(cx, level - 62, 22, 62); c.fillStyle = PAL.light; c.fill(E); dots(c, E, [cx - 25, level - 130, 50, 130], col('wax'), .3, 141, { cell: 5 }); crayon(c, ellPts(cx, level - 62, 22, 62, 0, 30), col('wax'), 3, 142, true); seedDot(c, cx, level - 62, 8, PAL.ink, col('pink')); dashedRing(c, cx, level - 62, 110, col('pink'), 143, [14, 10], 4); }
+  if (stage === 1) { const pts = [], pts2 = []; for (let a = .15; a <= 1.75; a += .05) { const A = a * Math.PI; pts.push([cx + Math.cos(A + Math.PI) * 150, level - 150 + Math.sin(A + Math.PI) * -130]); }
+    c.strokeStyle = mix(PAL.light, col('wax'), .3); c.lineWidth = 110; c.lineCap = 'round'; wob(c, pts, 2, 144);
+    c.strokeStyle = alpha(col('cerume'), .6); c.lineWidth = 5; for (let k = 2; k < pts.length - 2; k += 3) { const [x, y] = pts[k], dx = x - cx, dy = y - (level - 150), L = Math.hypot(dx, dy); wob(c, [[x - dx / L * 50, y - dy / L * 50], [x + dx / L * 50, y + dy / L * 50]], 2, 145 + k); }
+    seedDot(c, pts[0][0] - 10, pts[0][1] - 20, 9, PAL.ink, col('pink')); dashedRing(c, cx, level - 150, 260, col('pink'), 146, [14, 10], 4); }
+  if (stage === 2) placeBee(c, cx, cy - 30, 0, 2.1, 'ink', { pupa: 1, twitch: pulse(i, 6) ? 1 : 0 }, 150);
+  if (tau - [0, .75, 1.5][stage] < 3 / 12) aster(c, cx + 200, cy - ry + 120, 8, 12, col('honey'), 160 + stage, sm(0, .25, tau - [0, .75, 1.5][stage], easeOut), PAL.night, PAL.chalk);
+}
+function sceneEclosao(c, tau, i) {
+  paper(c); const z = lerp(2.05, 1.85, sm(1.2, 2, tau)); cam(c, CX, CY - 60, z);
+  drawCached(c, cached('comb', combSet));
+  const hole = ellPath(CX, CY, 50, 48);
+  if (tau < .9) { // cap still on, cracks drawing
+    c.strokeStyle = PAL.ink; c.lineWidth = 3.5; const pr = sm(.1, .8, tau, easeOut);
+    [[[CX, CY], [CX + 18, CY - 14], [CX + 12, CY - 34], [CX + 30, CY - 50]], [[CX, CY], [CX - 22, CY + 6], [CX - 30, CY + 30], [CX - 50, CY + 32]], [[CX, CY], [CX + 8, CY + 24], [CX + 34, CY + 34]]].forEach((pts, k) => selfDraw(c, pts, pr, 170 + k, 1.2));
+    if (pulse(i, 3)) { c.save(); c.translate(pulse(i, 6) ? 2 : -2, 0); crayon(c, ellPts(CX, CY, 62, 60, 0, 30), col('pink'), 3, 175, true); c.restore(); }
+  } else {
+    c.fillStyle = PAL.ink; c.fill(hole);
+    const bits = rng(176); for (let k = 0; k < 7; k++) { const a = bits() * TAU, d = 70 + sm(.9, 1.3, tau, easeOut) * (40 + bits() * 60); c.fillStyle = col('wax'); c.beginPath(); c.ellipse(CX + Math.cos(a) * d, CY + Math.sin(a) * d, 9 + bits() * 7, 6 + bits() * 4, a, 0, TAU); c.fill(); c.strokeStyle = shade(col('cerume'), .35); c.lineWidth = 2; c.stroke(); }
+    const out = sm(.95, 1.8, tau, easeIO), by = lerp(CY + 120, CY - 150, out), s = .72;
+    c.save(); const vis = new Path2D(); vis.ellipse(CX, CY, 50, 48, 0, 0, TAU); vis.rect(CX - 400, CY - 600, 800, 600); c.clip(vis);
+    placeBee(c, CX, by, 0, s, 'ink', { pale: 1 - sm(1.5, 2, tau) * .25, walk: tau * 2.5 * (out < 1 ? 1 : 0), wing: .05 + .12 * Math.max(0, Math.sin(tau * 9)) * sm(1.6, 2, tau), twitch: pulse(i, 4) ? 1 : 0 }, 180);
+    c.restore();
+    if (tau > 1.3) for (let b = 0; b < 4; b++) { const r = (tau - 1.3 - b * 4 / 12) * 260; if (r > 20 && r < 700) crayon(c, ellPts(CX, by, r, r, 0, 60), alpha(b % 2 ? col('honey') : col('pink'), .7), 4, 190 + b, true); }
+  }
+}
+function sceneSaida(c, tau, i) {
+  paper(c); camC(c, CX, CY - 120, 1.6); drawCached(c, cached('entrance', entranceSet));
+  const ex = EX(), ey = EY();
+  if (tau < .75) { const by = lerp(ey + 150, ey - 110, sm(0, .75, tau, easeOut));
+    c.save(); const vis = new Path2D(); vis.ellipse(ex, ey, 44, 40, 0, 0, TAU); vis.rect(ex - 500, ey - 900, 1000, 900); c.clip(vis);
+    placeBee(c, ex, by, 0, .62, 'ink', { walk: tau * 3, twitch: pulse(i, 4) ? 1 : 0, wing: sm(.5, .75, tau) * .3 }, 200); c.restore(); }
+  else { const t = sm(.75, 1.5, tau, easeIn), by = lerp(ey - 110, ey - 380, t), s = lerp(.62, 1.5, t);
+    speedLines(c, ex, by + 60, -Math.PI / 2, 210 + i, 9, .55, PAL.ink); loops(c, ex, by + 40, -Math.PI / 2, 211, .7, [col('pink'), col('honey')]);
+    placeBee(c, ex, by, 0, s, 'ink', { wing: .95, flap: i % 2, tuck: t }, 200); }
+}
+function sceneVoo(c, tau, i) {
+  if (!cache.field) cache.field = [0, 1, 2].map(k => { const L = layer(), g = L.getContext('2d'); resetT(g); g.translate(0, -k * H); fieldSet(g, k * H); return L; });
+  const off = lerp(2 * H, 2 * H - 1600, tau / 2);
+  paper(c); resetT(c); cache.field.forEach((L, k) => { const y = k * H - off; if (y > -H && y < H) c.drawImage(L, 0, y, W, H); });
+  const bx = CX + Math.sin(tau * 2.2) * 40, by = CY + 60;
+  dots(c, ellPath(bx + 110, by + 230, 60, 80), [bx + 40, by + 140, 150, 180], PAL.ink, .22, 220, { cell: 7 });
+  loops(c, bx, by + 60, -Math.PI / 2, 221, .75, [col('pink'), col('honey'), col('blue')]);
+  speedLines(c, bx, by + 40, -Math.PI / 2, 222 + (i >> 1), 7, .5, PAL.ink);
+  placeBee(c, bx, by, Math.cos(tau * 2.2) * .12, 1.35, 'ink', { wing: .95, flap: i % 2, tuck: 1 }, 200);
+}
+function sceneNectar(c, tau, i) {
+  paper(c); const fx = CX, fy = CY - 60; cam(c, CX, CY, lerp(1.0, 1.12, sm(0, 2.25, tau)));
+  drawCached(c, cached('nectar', nectarSet));
+  const drink = sm(.7, 2.0, tau), pool = ellPath(fx, fy, 50 * (1 - drink * .7) + 6, 44 * (1 - drink * .7) + 6);
+  c.fillStyle = alpha(col('honey'), .9); c.fill(pool); dots(c, pool, [fx - 60, fy - 60, 120, 120], col('pink'), .2, 230, { cell: 5 });
+  const s = 1.45, tongue = sm(.1, .7, tau, easeOut) * .7, by = fy + (92 + 70 * .7) * s - 12;
+  placeBee(c, fx, by, 0, s, 'ink', { tongue, load: drink, walk: 0, twitch: pulse(i, 5) ? 1 : 0, wing: .04 }, 200);
+  for (let k = 0; k < 6; k++) { const t0 = .8 + k * .25, u = (tau - t0) / .4; if (u < 0 || u > 1) continue; const y = lerp(fy, by - 92 * s, u); c.fillStyle = col('honey'); c.beginPath(); c.arc(fx + Math.sin(u * 6) * 3, y, 10, 0, TAU); c.fill(); c.strokeStyle = PAL.ink; c.lineWidth = 2; c.stroke(); }
+  if (tau > 1.9) for (let b = 0; b < 2; b++) { const r = (tau - 1.9 - b * 3 / 12) * 500; if (r > 10) crayon(c, ellPts(fx, by, r, r, 0, 60), alpha(col('honey'), .8), 4, 240 + b, true); }
+}
+const L1 = layer(), L2 = layer();
+function sceneVolta(c, tau, i) {
+  paper(c); camC(c, CX, CY - 120, 1.6); drawCached(c, cached('entrance', entranceSet));
+  const ex = EX(), ey = EY();
+  if (tau < .6) { const t = sm(0, .6, tau, easeOut), by = lerp(ey - 520, ey - 110, t), s = lerp(1.5, .62, t);
+    speedLines(c, ex + 20, by - 60, Math.PI / 2, 250 + i, 8, .55, PAL.ink); placeBee(c, ex, by, Math.PI + .0, s, 'ink', { wing: .95, flap: i % 2, load: 1, tuck: 1 - t }, 200); }
+  else { const by = lerp(ey - 110, ey + 170, sm(.6, 1.0, tau, easeIn));
+    c.save(); const vis = new Path2D(); vis.ellipse(ex, ey, 44, 40, 0, 0, TAU); vis.rect(ex - 500, ey + 0, 1000, 900); c.clip(vis);
+    placeBee(c, ex, by, Math.PI, .62, 'ink', { walk: tau * 3, load: 1 }, 200); c.restore(); }
+  // ink blot from the hole reveals the chamber
+  const R = lerp(0, 1500, sm(.75, 1.25, tau, easeOut));
+  if (R > 0) { const b = L2.getContext('2d'); sceneCourt(b, 0, i); const sx = CX + (ex - CX) * 1.6, sy = CY + (ey - (CY - 120)) * 1.6; blot(c, L2, sx, sy, R, 260, PAL.ink); }
+}
+// ---- the royal chamber: one world, four camera setups ----
+const QX = () => CX, QY = () => CY - 130;
+function sceneCourt(c, T, i) {
+  const shots = [[0, CX, CY - 40, 1.0], [1.75, CX, CY + 20, 1.55], [3.5, CX, CY - 5, 2.7], [5.5, CX, CY - 150, 1.12]];
+  let sh = shots[0]; for (const s of shots) if (T >= s[0]) sh = s;
+  night(c, PAL.night, 301); camC(c, sh[1], sh[2], sh[3]); drawCached(c, cached('interior', interiorSet));
+  const qx = QX(), qy = QY(), qs = 1.1;
+  dashedRing(c, qx, qy - 140, 420 + (sh === shots[3] ? sm(5.5, 7, T, easeOut) * 60 : 0), alpha(col('pink'), .8), 400 + (i >> 1), [22, 14], 4);
+  // court: workers ring the queen, facing her, bobbing on twos
+  [-165, -125, -60, -15, 22, 158].forEach((deg, k) => { const a = deg * Math.PI / 180, R = 360 - 14 * Math.sin(i * .7 + k * 1.3), x = qx + Math.cos(a) * R, y = qy - 140 + Math.sin(a) * R * 1.05;
+    placeBee(c, x, y, a - Math.PI / 2, .95, 'ink', { twitch: (i + k) % 5 === 0 ? 1 : 0, wing: .03 }, 420 + k * 11); });
+  placeBee(c, qx, qy, Math.PI, qs, 'ink', { queen: true, twitch: pulse(i, 7) ? 1 : 0, scribble: T >= 5.5 }, 480);
+  // our worker
+  const walkIn = sm(0, 3.0, T, easeOut), back = sm(5.5, 6.3, T, easeIO) * 70;
+  const by = lerp(H + 260, qy + 101 + 55 + 101, walkIn) + back, tongue = sm(3.6, 4.0, T, easeOut) * .75 * (1 - sm(5.5, 5.9, T));
+  const load = 1 - sm(3.9, 5.4, T) * .7;
+  placeBee(c, qx, by, 0, 1.1, 'ink', { walk: walkIn < 1 ? T * 2.4 : 0, tongue, load, twitch: pulse(i, 3) ? 1 : 0, wing: .03 }, 200);
+  const mouthB = by - 101, mouthQ = qy + 101;
+  if (T >= 3.5 && T < 5.5) {
+    for (let b = 0; b < 8; b++) { const r = (T - 3.5 - b * 4 / 12) * 180; if (r > 10 && r < 420) crayon(c, ellPts(qx, (mouthB + mouthQ) / 2, r, r, 0, 60), alpha(b % 2 ? col('honey') : col('pink'), .55), 3, 440 + b, true); }
+    for (let k = 0; k < 7; k++) { const t0 = 4.0 + k * .2, u = (T - t0) / .45; if (u < 0 || u > 1) continue; const y = lerp(mouthB - 55, mouthQ, u); c.fillStyle = col('honey'); c.beginPath(); c.arc(qx, y, 7, 0, TAU); c.fill(); c.strokeStyle = PAL.ink; c.lineWidth = 1.5; c.stroke(); }
+  }
+  if (T >= 5.5) { const g = sm(5.5, 6.2, T, easeOut); dotBurst(c, qx - 230, qy - 200, 120, 14, col('honey'), 460, g); dotBurst(c, qx + 240, qy - 60, 100, 12, col('pink'), 461, g); dotBurst(c, qx + 60, qy - 420, 90, 12, col('wax'), 462, sm(5.8, 6.5, T, easeOut)); }
+}
+// ---- defence at the entrance: one world, four shots ----
+const TRAIL = () => [[EX() - 420, EY() + 1150], [EX() - 360, EY() + 640], [EX() - 60, EY() + 560], [EX() + 4, EY() + 150]];
+function sceneDefense(c, T, i) {
+  const shots = [[0, CX, CY + 300, 1.0], [1.5, CX, CY + 230, 1.9], [3.0, CX + 60, CY - 160, 1.2], [4.5, CX, CY - 240, 1.25]];
+  let si = 0; shots.forEach((s, k) => { if (T >= s[0]) si = k; }); const sh = shots[si];
+  let cx = sh[1], cy = sh[2]; if (si === 3) { const f = sm(4.5, 5.3, T) - sm(5.3, 6, T); cx -= f * 120; cy -= f * 260; }
+  paper(c); camC(c, cx, cy, sh[3]); drawCached(c, cached('entrance', entranceSet));
+  const ex = EX(), ey = EY(), tr = TRAIL();
+  // side guards on the rim
+  placeBee(c, ex - 120, ey + 70, Math.PI + .6, .6, 'ink', { wing: T > 3.2 ? .5 : .1, twitch: pulse(i + 2, 5) ? 1 : 0 }, 520);
+  placeBee(c, ex + 120, ey + 70, Math.PI - .6, .6, 'ink', { wing: T > 3.2 ? .5 : .1, twitch: pulse(i, 5) ? 1 : 0 }, 530);
+  // ants
+  for (let k = 0; k < 5; k++) {
+    let u = clamp(T * .5 + .02 - k * .17, 0, 1), x, y, rot, flung = false;
+    const P = u2 => bez(...tr, u2), d = (() => { const a = P(Math.max(0, u - .01)), b = P(Math.min(1, u + .01)); return Math.atan2(b[1] - a[1], b[0] - a[0]); })();
+    if (T < 2.0) { [x, y] = P(u); rot = d + Math.PI / 2; }
+    else if (k === 0) { const [x0, y0] = P(clamp(2.0 * .5 + .02, 0, 1)), t = T - 2.0; x = x0 + t * 700; y = y0 + t * 900; rot = t * 14; flung = true; if (t > 1.6) continue; }
+    else { const u0 = clamp(2.0 * .5 + .02 - k * .17, 0, 1), turn = sm(2.0, 2.35, T), back = Math.max(0, T - 2.35) * .55; const uu = Math.max(0, u0 - back); [x, y] = P(uu); rot = d + Math.PI / 2 + turn * Math.PI; if (uu <= 0 && T > 3) continue; }
+    c.save(); c.translate(x, y); c.rotate(rot); c.scale(.8, .8); drawAnt(c, { walk: flung ? 0 : T * 3 + k * .3 }, 540 + k * 7); c.restore();
+    if (flung) speedLines(c, x, y, Math.atan2(900, 700), 560 + (i >> 1), 6, .6, PAL.ink);
+  }
+  // the guard (anchor)
+  if (T < 3.0) { const lunge = sm(1.9, 2.0, T, easeOut) * (1 - sm(2.15, 2.6, T)), by = ey + 48 + lunge * 55;
+    c.save(); const vis = new Path2D(); vis.ellipse(ex, ey, 44, 40, 0, 0, TAU); vis.rect(ex - 500, ey, 1000, 1400); c.clip(vis);
+    placeBee(c, ex, by, Math.PI, .62, 'ink', { jaw: T > 1.6 ? Math.max(sm(1.6, 1.9, T), lunge) : pulse(i, 8) ? .4 : 0, twitch: pulse(i, 3) ? 1 : 0, wing: .1 + lunge * .4 }, 200); c.restore();
+    if (T >= 2.0 && T < 2.6) { const g = sm(2.0, 2.5, T, easeOut); for (let b = 0; b < 3; b++) crayon(c, ellPts(ex, ey + 150, 40 + g * (80 + b * 70), 40 + g * (80 + b * 70), 0, 50), alpha(b % 2 ? col('honey') : col('pink'), 1 - g * .6), 5, 570 + b, true); construction(c, ex, ey + 150, 90, 575, alpha(col('pink'), .8)); }
+  } else {
+    // fly
+    let fx, fy, flap = i % 2;
+    if (T < 4.6) { const t = sm(3.0, 4.4, T, easeOut); fx = lerp(W + 150, ex + 280, t) + Math.sin(T * 17) * 30 * (1 - t * .5); fy = lerp(ey - 760, ey - 250, t) + Math.cos(T * 23) * 40; }
+    else { const t = sm(4.6, 5.4, T, easeIn); fx = lerp(ex + 280, -350, t); fy = lerp(ey - 250, ey - 1100, t); }
+    const fdir = T < 4.6 ? Math.atan2(ey - fy, ex - fx) : Math.atan2(-850, -630);
+    if (T < 5.5) { if (T >= 4.6) speedLines(c, fx, fy, fdir, 590 + (i >> 1), 7, .6, PAL.ink); c.save(); c.translate(fx, fy); c.rotate(fdir + Math.PI / 2); c.scale(1.5, 1.5); drawFly(c, { flap }, 600); c.restore(); }
+    // guard: steps out, faces the fly, chases, comes back and hovers
+    let gx, gy, grot, pose;
+    if (T < 4.5) { gx = ex; gy = ey + 20 - sm(3.0, 3.6, T, easeOut) * 120; grot = Math.atan2(fy - gy, fx - gx) + Math.PI / 2; pose = { wing: .2 + sm(3.4, 4.2, T) * .5, jaw: pulse(i, 4) ? .8 : .3, twitch: pulse(i, 3) ? 1 : 0 }; }
+    else { const go = sm(4.5, 5.2, T, easeIn), ret = sm(5.2, 6.0, T, easeIO); const cx1 = lerp(ex, ex - 260, go), cy1 = lerp(ey - 100, ey - 620, go); gx = lerp(cx1, ex, ret); gy = lerp(cy1, ey - 240, ret); grot = lerp(Math.atan2(-850, -630) + Math.PI / 2, 0, ret); pose = { wing: .95, flap: i % 2, tuck: 1 };
+      if (go > 0 && ret < .6) { speedLines(c, gx, gy, grot - Math.PI / 2, 610 + (i >> 1), 7, .5, PAL.ink); loops(c, gx, gy, grot - Math.PI / 2, 611, .7, [col('pink'), col('honey')]); } }
+    placeBee(c, gx, gy, grot, T < 4.5 ? .7 : lerp(.7, 1.1, sm(4.5, 5.0, T)), 'ink', pose, 200);
+  }
+  if (T >= 2.0 && T < 2.0 + 1 / 12) flash(c);
+}
+function sceneAssinatura(c, tau, i) {
+  paper(c); resetT(c);
+  hexLattice(c, [0, CY + 380, W, 800], 70, alpha(col('honey'), .9), .35, 3);
+  ripples(c, CX, CY - 200, [300, 420, 540].map(r => r + (tau * 30) % 120), alpha(col('pink'), .35), 700, 3);
+  const bx = CX + Math.sin(tau * 2.4) * 160 * (1 - sm(1.5, 3, tau) * .6), by = CY - 330 + Math.sin(tau * 4.8) * 40;
+  loops(c, bx, by + 40, -Math.PI / 2 + Math.cos(tau * 2.4) * .35, 701, .6, [col('pink'), col('honey')]);
+  placeBee(c, bx, by, Math.cos(tau * 2.4) * .35, 1.25, 'ink', { wing: .95, flap: i % 2, tuck: 1 }, 200);
+  signOff(c, 'Vida de Abelha', '', { x: CX, y: CY + 150, size: 118, ink: PAL.ink, ink2: col('pink'), progressA: sm(.2, 1.3, tau), progressB: 0 });
+}
+
+// Puppet sheet for development: every puppet at scales .6, 1, 1.8
+function puppetSheet(c, tau, i) {
+  paper(c); resetT(c);
+  [.6, 1, 1.8].forEach((s, k) => placeBee(c, 160 + k * 330 + (k === 2 ? 60 : 0), 330, 0, s, 'ink', { wing: k === 2 ? .95 : 0, load: k === 1 ? 1 : 0, flap: k === 2 ? i % 2 : undefined }, 200));
+  placeBee(c, 180, 900, 0, 1.2, 'ink', { pale: 1, twitch: 1 }, 200);
+  placeBee(c, 480, 900, 0, 1.2, 'ink', { pupa: 1 }, 200);
+  placeBee(c, 820, 950, 0, 1.2, 'ink', { queen: true, tongue: .8, scribble: true }, 480);
+  [.6, 1, 1.8].forEach((s, k) => { c.save(); c.translate(120 + k * 200, 1600); c.scale(s, s); drawAnt(c, { walk: .2 }, 540); c.restore(); });
+  [.6, 1.4].forEach((s, k) => { c.save(); c.translate(760 + k * 180, 1600); c.scale(s, s); drawFly(c, { flap: i % 2 }, 600); c.restore(); });
+}
+
+// ===================== SCORE =====================
+// A major pentatonic, 120 bpm (beat 0.5 s = 6 drawn frames). Every cue reads the same times as the pictures.
+function score(ac, t0, dest) {
+  const m = ac.createGain(); m.gain.value = .55; m.connect(dest);
+  const N = (o, s, t, d, type = 'triangle', g = .15) => note(ac, m, pentHz(o, s), t0, t, d, type, g);
+  const bell = (o, s, t, g = .12) => { N(o, s, t, 1.1, 'sine', g); N(o + 1, s, t, .5, 'sine', g * .35); };
+  const hat = (t, g = .035) => noiseBurst(ac, m, t0, t, .05, g, 1 + Math.round(t * 12));
+  const buzz = (t, d, hz, g = .03) => { const o = ac.createOscillator(), lfo = ac.createOscillator(), lg = ac.createGain(), e = ac.createGain(); o.type = 'sawtooth'; o.frequency.value = hz; lfo.frequency.value = 23; lg.gain.value = hz * .04; lfo.connect(lg); lg.connect(o.frequency); e.gain.setValueAtTime(0, t0 + t); e.gain.linearRampToValueAtTime(g, t0 + t + .08); e.gain.setValueAtTime(g, t0 + t + d - .1); e.gain.exponentialRampToValueAtTime(.0008, t0 + t + d); o.connect(e); e.connect(m); o.start(t0 + t); lfo.start(t0 + t); o.stop(t0 + t + d + .05); lfo.stop(t0 + t + d + .05); };
+  const bass = (s, t, d = 1.9, g = .16) => N(-2, s, t, d, 'sine', g);
+  // ovo: a pluck for every ripple
+  for (let b = 0; b * 4 / 12 < 1.5; b++) N(1, [0, 2, 4, 2, 3][b % 5], b * 4 / 12, .5, 'sine', .14);
+  note(ac, m, pentHz(0, 0), t0, 1.25, .8, 'sine', .08);
+  // favo: pad
+  bass(0, 1.5, 1.4, .14); N(0, 3, 1.5, 1.3, 'sine', .08);
+  // dentro: low swell + bell per stage
+  note(ac, m, 55, t0, 2.75, 2.2, 'sawtooth', .035); note(ac, m, 110, t0, 2.75, 2.2, 'sine', .08);
+  [[2.75, 0], [3.5, 2], [4.25, 4]].forEach(([t, s]) => bell(1, s, t, .16));
+  // eclosao: rising arpeggio, pop, sparkle
+  for (let k = 0; k < 8; k++) N(0 + (k >> 3), k, 5.0 + k * .125, .25, 'triangle', .1);
+  noiseBurst(ac, m, t0, 5.92, .12, .12, 55); note(ac, m, 110, t0, 5.92, .3, 'sine', .15);
+  for (let k = 0; k < 6; k++) N(2, k, 6.25 + k * 1 / 12, .4, 'sine', .07);
+  bass(0, 5.0); bass(3, 6.0, 1.0);
+  // travel: saida .. volta (7.0 - 14.0)
+  const travel = [0, 2, 4, 2, 3, 4, 3, 1];
+  for (let t = 7.0, k = 0; t < 14.0; t += .25, k++) { const nect = t >= 10.5 && t < 12.75; N(nect ? 1 : 0, travel[k % 8] + (nect ? 1 : 0), t, .2, nect ? 'triangle' : 'square', nect ? .08 : .035); if (k % 2 === 1 && !nect) hat(t); }
+  for (let t = 7.0; t < 14.0; t += 2) bass([0, 3, 4, 2][Math.round((t - 7) / 2) % 4], t);
+  buzz(7.75, 2.75, 196, .025); buzz(12.75, .6, 196, .025);
+  for (let k = 0; k < 6; k++) bell(2, [0, 1, 2, 3, 4, 4][k], 10.8 + k * .25, .06);   // droplets
+  for (let k = 0; k < 4; k++) N(1, 4 - k, 13.0 + k * .125, .3, 'triangle', .1);
+  noiseBurst(ac, m, t0, 13.5, .5, .06, 77);
+  // court: regal pad + bell melody
+  for (const [t, s] of [[14, 0], [16, 3], [18, 4], [20, 0]]) { bass(s, t, 1.95, .14); N(-1, s, t, 1.9, 'sine', .07); N(-1, s + 2, t, 1.9, 'sine', .05); }
+  [[14.5, 2], [15, 4], [15.5, 3], [16.25, 2], [16.75, 0], [17.5, 4]].forEach(([t, s]) => bell(1, s, t, .1));
+  for (let k = 0; k < 7; k++) bell(2, [0, 2, 4, 2, 4, 5, 7][k], 4.0 + 14 + k * .2, .07);   // trophallaxis drops at T 4.0 + k*.2
+  for (let k = 0; k < 10; k++) N(2, k * 3, 19.5 + k * 1 / 12, .5, 'sine', .05);
+  // defence: march, bite, buzz, chase
+  for (let t = 21.0, k = 0; t < 24.0; t += .25, k++) { N(-1, [0, 0, 3, 2][k % 4], t, .12, 'square', .045); hat(t + .125, .03); }
+  noiseBurst(ac, m, t0, 23.0, .3, .25, 91); note(ac, m, 55, t0, 23.0, .6, 'sine', .3); bass(0, 23.0, .8, .12);
+  buzz(24.0, 2.4, 330, .03);
+  for (let t = 24.0, k = 0; t < 27.0; t += .25, k++) { if (t >= 25.5) N(0 + (k % 4 === 3 ? 1 : 0), k % 5, t, .15, 'triangle', .08); hat(t, .025); }
+  bass(4, 24.0, 1.4); bass(2, 25.5, 1.4);
+  // assinatura: dyad and sparkle
+  note(ac, m, pentHz(-1, 0), t0, 27.0, 2.8, 'sine', .2); note(ac, m, pentHz(-1, 3), t0, 27.0, 2.8, 'sine', .14); note(ac, m, pentHz(0, 2), t0, 27.4, 2.4, 'sine', .1);
+  for (let k = 0; k < 8; k++) bell(1, k, 27.2 + k * .15, .05);
+}
+
+// ===================== FILM =====================
+const TIMELINE = [
+  { name: 'ovo',          dur: 1.50, fn: sceneOvo },
+  { name: 'favo',         dur: 1.25, fn: sceneFavo },
+  { name: 'dentro',       dur: 2.25, fn: sceneDentro },
+  { name: 'eclosao',      dur: 2.00, fn: sceneEclosao },
+  { name: 'saida',        dur: 1.50, fn: sceneSaida },
+  { name: 'voo',          dur: 2.00, fn: sceneVoo },
+  { name: 'nectar',       dur: 2.25, fn: sceneNectar },
+  { name: 'volta',        dur: 1.25, fn: sceneVolta },
+  { name: 'corte',        dur: 1.75, fn: at(sceneCourt, 0) },
+  { name: 'rainha',       dur: 1.75, fn: at(sceneCourt, 1.75) },
+  { name: 'trofalaxia',   dur: 2.00, fn: at(sceneCourt, 3.5) },
+  { name: 'gota',         dur: 1.50, fn: at(sceneCourt, 5.5) },
+  { name: 'formigas',     dur: 1.50, fn: at(sceneDefense, 0) },
+  { name: 'mordida',      dur: 1.50, fn: at(sceneDefense, 1.5) },
+  { name: 'mosca',        dur: 1.50, fn: at(sceneDefense, 3.0) },
+  { name: 'perseguicao',  dur: 1.50, fn: at(sceneDefense, 4.5) },
+  { name: 'assinatura',   dur: 3.00, fn: sceneAssinatura },
+];
+const DEV = false;   // style, palette and puppet sheets at frames 0..2 while working; false for the final render
+if (DEV) TIMELINE.unshift({ name: 'stylesheet', dur: 1 / 12, fn: styleSheet }, { name: 'palette', dur: 1 / 12, fn: paletteSheet }, { name: 'puppets', dur: 1 / 12, fn: puppetSheet });
+defineFilm({ timeline: TIMELINE, score, format: { ar: '9:16' } });
+</script>
