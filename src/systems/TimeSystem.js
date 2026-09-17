@@ -19,6 +19,12 @@
 //     Essa divisão evita um "advance" monolítico que misturaria o fim do
 //     turno de tarefas com o tick de decaimento da colônia — cada sistema
 //     (TaskSystem, ColonyState, TimeSystem) fica desacoplado do outro.
+//   advanceDays(n = 1, onNight = null): void
+//     Avança `n` dias-jogáveis completos (2n chamadas de advanceDay). Se a
+//     fase atual for noite, a primeira chamada só amanhece. `onNight(day)` é
+//     chamado a cada anoitecer (ponto de ColonyState.tickDecay(1)). Usado pelo
+//     fim de turno: time.advanceDays(config.days.daysPerShift, () => colony.tickDecay(1)).
+//     Para cedo se a vida acabar (isLifeOver) — não passa de maxDays + 1.
 //   isLifeOver(): boolean — true quando currentDay > maxDays.
 //   serialize(): object — objeto plano serializável.
 //   static deserialize(data): TimeSystem — reconstrói a partir do salvo.
@@ -40,6 +46,17 @@ export default class TimeSystem {
       // Amanhece: começa o próximo dia-jogável.
       this.isNight = false;
       this.currentDay += 1;
+    }
+  }
+
+  advanceDays(n = 1, onNight = null) {
+    const days = Math.max(0, Math.floor(Number.isFinite(n) ? n : 1));
+    for (let i = 0; i < days && !this.isLifeOver(); i++) {
+      if (!this.isNight) {
+        this.advanceDay();
+        if (typeof onNight === 'function') onNight(this.currentDay);
+      }
+      this.advanceDay();
     }
   }
 

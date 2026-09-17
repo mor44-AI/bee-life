@@ -50,30 +50,61 @@ export function seedFromString(str) {
 // ---------------------------------------------------------------------------
 
 function hexToRgb(hex) {
-  const c = String(hex).replace('#', '');
-  const full = c.length === 3 ? c.split('').map((ch) => ch + ch).join('') : c;
-  const num = parseInt(full, 16);
-  return { r: (num >> 16) & 0xff, g: (num >> 8) & 0xff, b: num & 0xff };
+  const c = String(hex).trim().replace('#', '');
+  const full =
+    c.length === 3 || c.length === 4 ? c.split('').map((ch) => ch + ch).join('') : c;
+  const num = parseInt(full.slice(0, 6), 16);
+  const a = full.length === 8 ? parseInt(full.slice(6, 8), 16) / 255 : 1;
+  return { r: (num >> 16) & 0xff, g: (num >> 8) & 0xff, b: num & 0xff, a };
 }
 
-/** Clareia (amount > 0) ou escurece (amount < 0) uma cor hex, amount em [-1, 1]. */
-export function shade(hexColor, amount) {
-  const { r, g, b } = hexToRgb(hexColor);
+/**
+ * Lê uma cor em hex (#rgb, #rrggbb, #rrggbbaa), 'rgb(r, g, b)' ou 'rgba(r, g, b, a)'
+ * e devolve { r, g, b, a }. Exportado para reuso pelas tarefas.
+ */
+export function parseColor(color) {
+  const str = String(color).trim();
+  if (/^rgba?\(/i.test(str)) {
+    const nums = str.match(/-?[\d.]+%?/g) || [];
+    const ch = (v) => (String(v).endsWith('%') ? (parseFloat(v) / 100) * 255 : parseFloat(v));
+    const [r = 0, g = 0, b = 0] = nums.slice(0, 3).map(ch);
+    let a = nums[3] != null ? parseFloat(nums[3]) : 1;
+    if (String(nums[3] ?? '').endsWith('%')) a /= 100;
+    return { r, g, b, a: Number.isFinite(a) ? a : 1 };
+  }
+  return hexToRgb(str);
+}
+
+function formatColor(r, g, b, a) {
+  const c = (v) => Math.round(Math.min(255, Math.max(0, v)));
+  if (a >= 1) return `rgb(${c(r)}, ${c(g)}, ${c(b)})`;
+  return `rgba(${c(r)}, ${c(g)}, ${c(b)}, ${Math.round(Math.max(0, a) * 1000) / 1000})`;
+}
+
+/**
+ * Clareia (amount > 0) ou escurece (amount < 0) uma cor, amount em [-1, 1].
+ * Aceita hex, rgb() ou rgba(); devolve 'rgb(...)' (ou 'rgba(...)' se a entrada
+ * tinha alfa < 1) — o resultado pode ser re-alimentado aqui/em mixColors/withAlpha.
+ */
+export function shade(color, amount) {
+  const { r, g, b, a } = parseColor(color);
   const mix = (channel) => {
     const target = amount >= 0 ? 255 : 0;
-    return Math.round(channel + (target - channel) * Math.abs(amount));
+    return channel + (target - channel) * Math.abs(amount);
   };
-  return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
+  return formatColor(mix(r), mix(g), mix(b), a);
 }
 
-/** Interpola linearmente entre duas cores hex, t em [0, 1]. */
-export function mixColors(hexA, hexB, t) {
-  const a = hexToRgb(hexA);
-  const b = hexToRgb(hexB);
-  const r = Math.round(a.r + (b.r - a.r) * t);
-  const g = Math.round(a.g + (b.g - a.g) * t);
-  const bch = Math.round(a.b + (b.b - a.b) * t);
-  return `rgb(${r}, ${g}, ${bch})`;
+/** Interpola linearmente entre duas cores (hex, rgb() ou rgba()), t em [0, 1]. */
+export function mixColors(colorA, colorB, t) {
+  const a = parseColor(colorA);
+  const b = parseColor(colorB);
+  return formatColor(
+    a.r + (b.r - a.r) * t,
+    a.g + (b.g - a.g) * t,
+    a.b + (b.b - a.b) * t,
+    a.a + (b.a - a.a) * t
+  );
 }
 
 /** Converte hex (ou já 'rgb(...)') para uma string rgba com a opacidade dada. */

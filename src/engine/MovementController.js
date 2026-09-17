@@ -31,6 +31,30 @@ function shapeContainsPoint(shape, x, y) {
   )
 }
 
+const PUSH_EPS = 0.5
+
+// Se (x, y) está dentro de `shape`, devolve o ponto mais próximo logo fora da borda.
+function pushOutOf(shape, x, y) {
+  if (shape.radius != null) {
+    const dx = x - shape.x
+    const dy = y - shape.y
+    const d = Math.hypot(dx, dy)
+    const ux = d > 1e-6 ? dx / d : 0
+    const uy = d > 1e-6 ? dy / d : -1
+    const r = shape.radius + PUSH_EPS
+    return { x: shape.x + ux * r, y: shape.y + uy * r }
+  }
+  const left = x - shape.x
+  const right = shape.x + shape.width - x
+  const top = y - shape.y
+  const bottom = shape.y + shape.height - y
+  const m = Math.min(left, right, top, bottom)
+  if (m === left) return { x: shape.x - PUSH_EPS, y }
+  if (m === right) return { x: shape.x + shape.width + PUSH_EPS, y }
+  if (m === top) return { x, y: shape.y - PUSH_EPS }
+  return { x, y: shape.y + shape.height + PUSH_EPS }
+}
+
 export function create({ bounds = null, obstacles = [], speed = 100 } = {}) {
   const startX = bounds ? bounds.x + bounds.width / 2 : 0
   const startY = bounds ? bounds.y + bounds.height / 2 : 0
@@ -38,6 +62,7 @@ export function create({ bounds = null, obstacles = [], speed = 100 } = {}) {
   const controller = {
     position: { x: startX, y: startY },
     collided: false,
+    pushedOut: false,
     speed,
     _speedMultiplier: 1,
 
@@ -51,6 +76,28 @@ export function create({ bounds = null, obstacles = [], speed = 100 } = {}) {
 
     update(dt, inputVector = { x: 0, y: 0 }) {
       this.collided = false
+      this.pushedOut = false
+
+      // Desencaixe: se começou dentro de algum obstáculo, empurra para fora
+      // (algumas iterações resolvem obstáculos sobrepostos).
+      for (let iter = 0; iter < 4; iter++) {
+        let moved = false
+        for (const obstacle of obstacles) {
+          if (shapeContainsPoint(obstacle, this.position.x, this.position.y)) {
+            let p = pushOutOf(obstacle, this.position.x, this.position.y)
+            if (bounds) {
+              p = {
+                x: Math.min(Math.max(p.x, bounds.x), bounds.x + bounds.width),
+                y: Math.min(Math.max(p.y, bounds.y), bounds.y + bounds.height),
+              }
+            }
+            this.position = p
+            this.pushedOut = true
+            moved = true
+          }
+        }
+        if (!moved) break
+      }
 
       const ix = inputVector.x || 0
       const iy = inputVector.y || 0

@@ -192,17 +192,21 @@ export function drawBeeBody(ctx, pose) {
   const s = pose.scale || 1;
   ctx.scale(s, s);
 
-  // Asas atrás do corpo, translúcidas — a ordem de desenho evita ter que
-  // resolver z-order complexo entre par dianteiro/traseiro.
-  drawWingPair(ctx, pose, colors);
+  // VISTA DE CIMA (dorsal), coerente com o jogo top-down: eixo +x = frente
+  // (cabeça), y = lateral. O corpo é simétrico em y, então:
+  //  - pernas: 3 pares, UM de cada lado, saindo das laterais do tórax
+  //    (desenhadas antes do corpo, que cobre os quadris);
+  //  - corpo: cabeça, tórax e abdômen como UMA silhueta contínua (ver
+  //    buildBodySilhouette) — três blobs com contorno próprio leriam como
+  //    "conta de colar"/mascote, o que styleGuide.beeDesignNote proíbe;
+  //  - asas: nascem do dorso do tórax e apontam para TRÁS, deitadas sobre o
+  //    abdômen (translúcidas, desenhadas por cima do corpo); ao bater, abrem
+  //    para os lados;
+  //  - cabeça: dois olhos compostos nas laterais, antenas geniculadas
+  //    espelhadas para a frente, probóscide para a frente.
   drawLegs(ctx, pose, colors, seed);
-  // Cabeça, tórax e abdômen são desenhados como UMA silhueta contínua (ver
-  // buildBodySilhouette) em vez de três blobs com contorno próprio — três
-  // círculos encostados leriam como "conta de colar"/mascote, o que o
-  // styleGuide.beeDesignNote explicitamente proíbe. A distinção entre os
-  // três segmentos vem da leve variação de tom e das "vincas" discretas em
-  // drawSegmentCreases, não de um contorno fechado por segmento.
   drawBodySilhouette(ctx, pose, colors, seed);
+  drawWingPair(ctx, pose, colors);
   drawHeadDetails(ctx, pose, colors, seed);
 
   ctx.restore();
@@ -233,67 +237,95 @@ function drawSingleWing(ctx, colors, length, width) {
   ctx.globalAlpha = 1;
 }
 
+/** Raiz das asas: dorso do tórax (BODY_PROFILE: tórax mais largo perto de x=3.5). */
+const WING_ROOT = { fore: { x: 3.4, y: 2.2 }, hind: { x: 1.4, y: 2.4 } };
+
 function drawWingPair(ctx, pose, colors) {
-  const flap = pose.wingAngle || 0;
+  // wingAngle ~0 = asas fechadas sobre o abdômen; |wingAngle| até ~1 = abertas
+  // para os lados (batida). Com vista de cima, a batida aparece como abertura
+  // lateral + leve encurtamento (asa inclinada em relação à câmera).
+  const flap = Math.min(1, Math.abs(pose.wingAngle || 0));
+  const spread = 0.12 + flap * 1.15;
+  const foreshorten = 1 - flap * 0.22;
 
-  // Raiz das asas no dorso do tórax (ver BODY_PROFILE: tórax mais largo
-  // perto de x=3.5), levemente à frente do topo do abdômen.
-  ctx.save();
-  ctx.translate(3, -5);
-  ctx.rotate(-0.34 - flap);
-  drawSingleWing(ctx, colors, 13, 6.5);
-  ctx.restore();
+  [1, -1].forEach((side) => {
+    // asa traseira (menor, por baixo)
+    ctx.save();
+    ctx.translate(WING_ROOT.hind.x, WING_ROOT.hind.y * side);
+    ctx.rotate(Math.PI - side * (spread + 0.16));
+    ctx.scale(foreshorten, side);
+    drawSingleWing(ctx, colors, 10.5, 3.6);
+    ctx.restore();
 
-  ctx.save();
-  ctx.translate(0.5, -4.2);
-  ctx.rotate(-0.18 - flap * 0.8);
-  drawSingleWing(ctx, colors, 9, 4.5);
-  ctx.restore();
+    // asa dianteira (maior, por cima), bordo de ataque para fora
+    ctx.save();
+    ctx.translate(WING_ROOT.fore.x, WING_ROOT.fore.y * side);
+    ctx.rotate(Math.PI - side * spread);
+    ctx.scale(foreshorten, side);
+    drawSingleWing(ctx, colors, 16, 4.6);
+    ctx.restore();
+  });
 }
 
-function drawLegs(ctx, pose, colors, seed) {
-  const attach = [
-    { x: 5, y: 3.8 },
-    { x: 1, y: 4.2 },
-    { x: -4, y: 4.6 },
-  ];
-  attach.forEach((hip, i) => {
-    const phase = (pose.legPhase || 0) + (i * Math.PI * 2) / 3;
-    const grounded = pose.grounded !== false;
-    const swing = grounded ? Math.sin(phase) * 2.4 : Math.sin(phase) * 0.8;
-    const tuck = grounded ? 0 : 4.5;
-    const knee = { x: hip.x + swing * 0.4, y: hip.y + 5 - tuck * 0.3 };
-    const foot = { x: hip.x + swing, y: hip.y + 9 - tuck };
-    strokeHandDrawn(ctx, [hip, knee, foot], {
-      color: colors.legs,
-      baseWidth: 1.1,
-      widthJitter: 0.3,
-      seed: seed + i,
-      opacity: 0.9,
-    });
+// Quadris nas laterais do tórax (frente -> trás) e forma de cada perna em
+// vista de cima: [joelho, pé] relativos ao quadril, para o lado +y.
+const LEG_HIPS = [5.2, 3.2, 1.2];
+const LEG_SHAPES = [
+  { knee: { x: 3.2, y: 5.4 }, foot: { x: 7, y: 8.6 } }, // dianteira: para a frente
+  { knee: { x: 0.4, y: 6.6 }, foot: { x: -1.6, y: 11 } }, // média: para o lado
+  { knee: { x: -3.2, y: 6.2 }, foot: { x: -9, y: 9.6 } }, // traseira: para trás (corbícula)
+];
 
-    if (i === 2 && pose.carrying && pose.carrying.type === 'pollen') {
+function drawLegs(ctx, pose, colors, seed) {
+  const grounded = pose.grounded !== false;
+  [1, -1].forEach((side, si) => {
+    LEG_SHAPES.forEach((shape, i) => {
+      // Marcha em tripé: pernas 0 e 2 de um lado andam em fase com a 1 do outro.
+      const phase = (pose.legPhase || 0) + (i % 2 === si ? 0 : Math.PI);
+      const swing = grounded ? Math.sin(phase) * 1.9 : Math.sin(phase) * 0.4;
+      const tuck = grounded ? 1 : 0.55; // em voo as pernas ficam recolhidas junto ao corpo
+      const back = grounded ? 0 : 2.5;
+      const hip = { x: LEG_HIPS[i], y: 3.4 * side };
+      const knee = {
+        x: hip.x + shape.knee.x * (grounded ? 1 : 0.7) + swing * 0.5 - back * 0.5,
+        y: hip.y + shape.knee.y * tuck * side,
+      };
+      const foot = {
+        x: hip.x + shape.foot.x * (grounded ? 1 : 0.6) + swing - back,
+        y: hip.y + shape.foot.y * tuck * side,
+      };
+      strokeHandDrawn(ctx, [hip, knee, foot], {
+        color: colors.legs,
+        baseWidth: 1.1,
+        widthJitter: 0.3,
+        seed: seed + i + si * 7,
+        opacity: 0.9,
+      });
+
+      if (i !== 2 || !pose.carrying) return;
+      // Carga na tíbia traseira (entre joelho e pé), dos dois lados.
       const amount = pose.carrying.amount ?? 1;
+      const cx = (knee.x + foot.x) / 2;
+      const cy = (knee.y + foot.y) / 2;
       ctx.save();
-      ctx.fillStyle = '#C9A227';
-      ctx.globalAlpha = 0.9;
-      ctx.beginPath();
-      ctx.ellipse(foot.x - 1, foot.y - 1, 2.6 * amount, 2 * amount, 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = colors.bodyShadow;
-      ctx.lineWidth = 0.5;
-      ctx.globalAlpha = 0.5;
-      ctx.stroke();
+      if (pose.carrying.type === 'pollen') {
+        ctx.fillStyle = '#C9A227';
+        ctx.globalAlpha = 0.9;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 2.6 * amount, 1.9 * amount, 0.5 * side, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = colors.bodyShadow;
+        ctx.lineWidth = 0.5;
+        ctx.globalAlpha = 0.5;
+        ctx.stroke();
+      } else if (pose.carrying.type === 'nectar') {
+        ctx.fillStyle = 'rgba(245, 197, 66, 0.55)';
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, 2 * amount, 2.2 * amount, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
       ctx.restore();
-    } else if (i === 2 && pose.carrying && pose.carrying.type === 'nectar') {
-      const amount = pose.carrying.amount ?? 1;
-      ctx.save();
-      ctx.fillStyle = 'rgba(245, 197, 66, 0.55)';
-      ctx.beginPath();
-      ctx.ellipse(foot.x - 1, foot.y, 2 * amount, 2.4 * amount, 0, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
+    });
   });
 }
 
@@ -453,48 +485,48 @@ function drawBodySilhouette(ctx, pose, colors, seed) {
   });
 }
 
-const HEAD_CENTER = { x: 10.6, y: -0.3 };
+const HEAD_CENTER = { x: 10.6, y: 0 };
 
 function drawHeadDetails(ctx, pose, colors, seed) {
   ctx.save();
   ctx.translate(HEAD_CENTER.x, HEAD_CENTER.y);
-  ctx.rotate(pose.headTilt || 0);
+  // Em vista de cima, headTilt vira uma leve guinada lateral da cabeça.
+  ctx.rotate((pose.headTilt || 0) * 0.5);
 
-  // Antenas geniculadas (cotovelo característico de himenópteros) — curtas
-  // e discretas, nunca do tamanho das antenas de uma formiga/mosca.
-  strokeHandDrawn(ctx, [{ x: 0.5, y: -2.8 }, { x: 3.2, y: -6.6 }, { x: 6, y: -5.6 }], {
-    color: colors.legs,
-    baseWidth: 0.9,
-    widthJitter: 0.2,
-    seed: seed + 30,
-    opacity: 0.9,
+  [1, -1].forEach((side, si) => {
+    // Antenas geniculadas (cotovelo característico de himenópteros) — curtas
+    // e discretas, espelhadas para a frente.
+    strokeHandDrawn(ctx, [
+      { x: 2.4, y: 1.2 * side },
+      { x: 5.6, y: 3.6 * side },
+      { x: 9, y: 2.6 * side },
+    ], {
+      color: colors.legs,
+      baseWidth: 0.9,
+      widthJitter: 0.2,
+      seed: seed + 30 + si,
+      opacity: 0.9,
+    });
+
+    // Olho composto nas laterais da cabeça — proporcional (nunca gigante).
+    ctx.beginPath();
+    ctx.ellipse(0.6, 3 * side, 2.1, 1.35, 0.25 * side, 0, Math.PI * 2);
+    ctx.fillStyle = colors.eye;
+    ctx.globalAlpha = 0.92;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.beginPath();
+    ctx.ellipse(0.1, 2.7 * side, 0.5, 0.4, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(239, 232, 214, 0.5)';
+    ctx.fill();
   });
-  strokeHandDrawn(ctx, [{ x: 0.5, y: -2.3 }, { x: 4, y: -5 }, { x: 7.2, y: -3.2 }], {
-    color: colors.legs,
-    baseWidth: 0.9,
-    widthJitter: 0.2,
-    seed: seed + 31,
-    opacity: 0.9,
-  });
 
-  // Olho composto — proporcional (nunca gigante estilo cartoon).
-  ctx.beginPath();
-  ctx.ellipse(1.3, -0.3, 2, 2.4, 0.3, 0, Math.PI * 2);
-  ctx.fillStyle = colors.eye;
-  ctx.globalAlpha = 0.92;
-  ctx.fill();
-  ctx.globalAlpha = 1;
-  ctx.beginPath();
-  ctx.ellipse(0.7, -1, 0.45, 0.55, 0.3, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(239, 232, 214, 0.5)';
-  ctx.fill();
-
-  // Probóscide — só aparece/estende quando mouthOpen > 0 (regurgitação/alimentação).
+  // Probóscide — só aparece/estende quando mouthOpen > 0, para a frente.
   const mouthOpen = pose.mouthOpen || 0;
   if (mouthOpen > 0.02) {
     strokeHandDrawn(ctx, [
-      { x: 2.2, y: 2.6 },
-      { x: 2.6, y: 2.6 + 4.5 * mouthOpen },
+      { x: 3, y: 0 },
+      { x: 3.2 + 5 * mouthOpen, y: 0.2 },
     ], {
       color: colors.legs,
       baseWidth: 0.8,
