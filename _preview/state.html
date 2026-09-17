@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vida de Abelha — preview de estado</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #1a1410; }
+      canvas { display: block; width: 100vw; height: 100vh; touch-action: none; }
+      #hud-debug {
+        position: fixed; left: 8px; bottom: 8px; font: 12px monospace;
+        color: #e3dac0; background: rgba(0,0,0,.45); padding: 4px 8px; pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+    <div id="hud-debug"></div>
+    <script type="module" src="./state-harness.js"></script>
+  </body>
+</html>
