@@ -1,4 +1,4 @@
-// TaskHubState — "casa" entre turnos: interior da colmeia (pré-renderizado),
+// TaskHubState - "casa" entre turnos: interior da colmeia (pré-renderizado),
 // a operária do jogador em idle, HUD da colônia (com progresso até a próxima
 // função), dia/noite visual conforme context.time.isNight, fato real rotativo de
 // species.js e o botão grande "Iniciar turno" na zona do polegar (toque/clique ou
@@ -10,6 +10,7 @@ import { drawHiveInterior } from '../art/hive.js'
 import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { drawLightOverlay } from '../art/environment.js'
 import { species } from '../data/species.js'
+import { config } from '../data/config.js'
 import { UI, font, drawDottedCircle, drawScaleArc, setLetterSpacing } from '../ui/IndicatorBar.js'
 import {
   drawHUD,
@@ -207,12 +208,12 @@ export default {
 
     drawHUD(ctx, context, { night })
 
-    // Fato real rotativo — cartão claro, tinta cheia (contraste alto sobre o papel).
+    // Fato real rotativo - cartão claro, tinta cheia (contraste alto sobre o papel).
     const facts = species.funFacts || []
     if (facts.length) {
       const idx = (factIndex + Math.floor(t / FACT_PERIOD)) % facts.length
       const phase = (t % FACT_PERIOD) / FACT_PERIOD
-      const alpha = Math.min(1, Math.min(phase, 1 - phase) * 14)
+      const alpha = 0.8 + 0.2 * Math.min(1, Math.min(phase, 1 - phase) * 14)
       const f = H.fact
       drawPaperCard(ctx, f.x, f.y, f.w, f.h, { seed: 91, night: false })
       const padX = 18 * u
@@ -243,18 +244,18 @@ export default {
       }
       if (lines.length > maxLines) {
         lines = lines.slice(0, maxLines)
-        lines[maxLines - 1] = lines[maxLines - 1].replace(/[\s,.;:—-]*\S*$/, '') + '…'
+        lines[maxLines - 1] = lines[maxLines - 1].replace(/[\s,.;:\-]*\S*$/, '') + '…'
       }
       lines.forEach((line, i) => ctx.fillText(line, f.x + padX, textTop + size + i * lh))
       ctx.restore()
     }
 
-    // Botão de turno — acento rosa da cena (zona do polegar).
+    // Botão de turno - acento rosa da cena (zona do polegar).
     drawButton(ctx, H.btn, rank === 'larva' ? 'Nascer' : 'Iniciar turno', {
       hover,
       focused: true,
       time: t,
-      caption: rank === 'larva' ? '' : rankName(rank),
+      caption: rank === 'larva' ? '' : `${rankName(rank)} · turno ${(context.tasks?.getCompletedShifts?.() ?? 0) + 1} de ${config.turnsPerTask[rank]}`,
       seed: 5,
     })
 

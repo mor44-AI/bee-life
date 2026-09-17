@@ -1,13 +1,13 @@
 // Desenho procedural do interior da colmeia (favo de células, câmara real).
 //
-// Ver src/data/styleGuide.js: o favo deve ler como padrão ORGÂNICO — células
-// de tamanho/rotação levemente irregulares e posições com jitter — nunca um
+// Ver src/data/styleGuide.js: o favo deve ler como padrão ORGÂNICO - células
+// de tamanho/rotação levemente irregulares e posições com jitter - nunca um
 // grid perfeito de hexágonos idênticos. Isso também é biologicamente correto
 // para Meliponini (abelhas sem ferrão como a Mandaçaia): ao contrário da Apis
 // mellifera, o favo de cria é um disco horizontal com células bem menos
 // regulares que o hex-grid clássico de colmeia europeia.
 //
-// Regra de design: funções puras — drawCell/drawComb/drawQueenChamber/
+// Regra de design: funções puras - drawCell/drawComb/drawQueenChamber/
 // drawHiveInterior só leem os parâmetros recebidos.
 
 import {
@@ -91,9 +91,9 @@ function drawCellContent(ctx, x, y, size, state, seed) {
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      // Larva enrolada em "C" — construída como uma faixa de espessura
+      // Larva enrolada em "C" - construída como uma faixa de espessura
       // VARIÁVEL (afunilando nas pontas), não um traço de largura
-      // constante com pontas arredondadas — isso lia como a letra "C"
+      // constante com pontas arredondadas - isso lia como a letra "C"
       // tipográfica em vez de uma larva orgânica.
       const segs = 9;
       const rMid = size * 0.3;
@@ -243,7 +243,7 @@ export function drawComb(ctx, comb = {}) {
 /**
  * Desenha a arquitetura da câmara real: uma célula bem maior e alongada,
  * de parede mais grossa, cercada por uma pequena "coroa" de células
- * seladas (guarda). Não desenha a rainha em si — isso é responsabilidade
+ * seladas (guarda). Não desenha a rainha em si - isso é responsabilidade
  * de quem chama (reaproveitando drawBeeBody com um pose/colorVariant
  * próprios da rainha).
  * chamber: { x, y, width, height, seed, rotation }

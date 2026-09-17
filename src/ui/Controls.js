@@ -1,4 +1,4 @@
-// Controls — camada de controles unificada (celular E PC). As tarefas devem ler
+// Controls - camada de controles unificada (celular E PC). As tarefas devem ler
 // ESTE objeto em vez de ler InputManager direto: o mesmo código de tarefa funciona
 // com dedo (seguir o dedo + botões virtuais na zona do polegar) e com teclado/mouse.
 //
@@ -13,7 +13,7 @@
 //                                Quando true, as SETAS viram direções e só WASD move.
 //       meter = null             SpecialMeter (engine/SpecialMeter.js): o botão mostra a
 //                                carga em arco e pulsa em accentPink quando pronto.
-//                                Controls NÃO chama meter.update/activate — a tarefa faz.
+//                                Controls NÃO chama meter.update/activate - a tarefa faz.
 //       actionLabel = 'AÇÃO', specialLabel = 'ESPECIAL'
 //       touchOffsetY = 64        no toque, o alvo de movimento fica N px (× uiScale
 //                                limitado) ACIMA do dedo, para o dedo não cobrir a abelha.
@@ -39,7 +39,7 @@
 //     controls.directionPressed -> 'up'|'down'|'left'|'right'|null (borda; setas ou botões)
 //     controls.pointerTap -> null | { x, y, pointerType }
 //       toque/clique CURTO (<= tapMaxTime, <= tapMaxDist) iniciado dentro do playfield
-//       e fora dos botões — coordenadas do dedo (SEM offset). Ex.: "tocar no inimigo".
+//       e fora dos botões - coordenadas do dedo (SEM offset). Ex.: "tocar no inimigo".
 //       Obs.: durante o toque a abelha também recebe `move` (seguir); a tarefa pode
 //       ignorar isso se o tap for o gesto principal.
 //     controls.fieldPointer -> null | { x, y } posição crua do ponteiro que move.
@@ -407,7 +407,7 @@ function hintText(ctx, text, x, y, u) {
 
 function drawAction(ctx, b, o, pressed, isTouch, u) {
   const r = dial(ctx, b, pressed, isTouch)
-  // glifo: célula de favo (hexágono) — o "fazer" da operária
+  // glifo: célula de favo (hexágono) - o "fazer" da operária
   const hr = r * 0.26
   ctx.beginPath()
   for (let i = 0; i < 6; i++) {

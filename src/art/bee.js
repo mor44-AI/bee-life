@@ -2,16 +2,16 @@
 //
 // Ver src/data/styleGuide.js -> beeDesignNote: a abelha precisa ler como
 // ilustração naturalista elegante e anatomicamente plausível (cabeça, tórax
-// e abdômen distintos, asas translúcidas com nervura fina) — nunca como
+// e abdômen distintos, asas translúcidas com nervura fina) - nunca como
 // mascote de cartoon (nada de cabeça gigante / olhos enormes). O charme vem
 // da animação fluida e da textura de hachura, não de proporções exageradas.
 //
-// Regra de design: funções puras. drawBeeBody(ctx, pose) só lê `pose` — não
+// Regra de design: funções puras. drawBeeBody(ctx, pose) só lê `pose` - não
 // há estado global nem side-effects fora do desenho. As funções create*Pose
 // são fábricas de pose (também puras: recebem x, y, t e devolvem um objeto
 // pose nunca compartilhado por referência entre chamadas). A interpolação
 // *entre* poses nomeadas (ex.: idle -> voo) é responsabilidade do chamador,
-// via engine/tween.js#interpolatePose — este módulo não depende de tween.js
+// via engine/tween.js#interpolatePose - este módulo não depende de tween.js
 // internamente, só sabe desenhar uma pose e gerar poses paramétricas por t.
 
 import {
@@ -25,7 +25,7 @@ import {
 } from './textureUtils.js';
 
 // ---------------------------------------------------------------------------
-// Paleta por variante de idade — abelhas jovens (recém-emergidas) são mais
+// Paleta por variante de idade - abelhas jovens (recém-emergidas) são mais
 // claras/menos melanizadas; abelhas mais velhas têm a cutícula mais escura
 // (fato biológico real, confirmado nesta sessão de design).
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ export function drawBeeBody(ctx, pose) {
   //  - pernas: 3 pares, UM de cada lado, saindo das laterais do tórax
   //    (desenhadas antes do corpo, que cobre os quadris);
   //  - corpo: cabeça, tórax e abdômen como UMA silhueta contínua (ver
-  //    buildBodySilhouette) — três blobs com contorno próprio leriam como
+  //    buildBodySilhouette) - três blobs com contorno próprio leriam como
   //    "conta de colar"/mascote, o que styleGuide.beeDesignNote proíbe;
   //  - asas: nascem do dorso do tórax e apontam para TRÁS, deitadas sobre o
   //    abdômen (translúcidas, desenhadas por cima do corpo); ao bater, abrem
@@ -330,11 +330,11 @@ function drawLegs(ctx, pose, colors, seed) {
 }
 
 // ---------------------------------------------------------------------------
-// Silhueta do corpo — UM contorno contínuo cobrindo abdômen + tórax +
+// Silhueta do corpo - UM contorno contínuo cobrindo abdômen + tórax +
 // cabeça, construído por uma função de "meia-largura" ao longo do eixo
 // longitudinal. Isso é o que dá a leitura de inseto real (perfil único e
 // fluido) em vez de três blobs com contorno cada um (que leria como
-// "conta de colar"/mascote — ver aviso em styleGuide.beeDesignNote).
+// "conta de colar"/mascote - ver aviso em styleGuide.beeDesignNote).
 // x cresce para a frente (cabeça em +x, ponta do abdômen em -x).
 // ---------------------------------------------------------------------------
 
@@ -344,7 +344,7 @@ const BODY_PROFILE = [
   { x: -11, r: 7.2 },
   { x: -7, r: 6.7 },
   { x: -3.5, r: 4.9 },
-  { x: -1, r: 3.1 }, // cintura (propódeo) — moderada, Meliponini não é "cintura de vespa"
+  { x: -1, r: 3.1 }, // cintura (propódeo) - moderada, Meliponini não é "cintura de vespa"
   { x: 1.5, r: 4.7 },
   { x: 3.5, r: 6.7 }, // tórax mais largo
   { x: 6, r: 5.5 },
@@ -394,7 +394,7 @@ function buildBodyOutline(pose, seed) {
 }
 
 function drawAbdomenBands(ctx, colors) {
-  // Faixas como "anéis" que envolvem o abdômen que afunila — topo/base quase
+  // Faixas como "anéis" que envolvem o abdômen que afunila - topo/base quase
   // retos (acompanhando a borda do corpo naquele x), só com as pontas
   // arredondadas, para ler como tergito/banda e não como uma folha/gota.
   const bandXs = [-4.5, -8, -11.5, -14.5];
@@ -494,7 +494,7 @@ function drawHeadDetails(ctx, pose, colors, seed) {
   ctx.rotate((pose.headTilt || 0) * 0.5);
 
   [1, -1].forEach((side, si) => {
-    // Antenas geniculadas (cotovelo característico de himenópteros) — curtas
+    // Antenas geniculadas (cotovelo característico de himenópteros) - curtas
     // e discretas, espelhadas para a frente.
     strokeHandDrawn(ctx, [
       { x: 2.4, y: 1.2 * side },
@@ -508,7 +508,7 @@ function drawHeadDetails(ctx, pose, colors, seed) {
       opacity: 0.9,
     });
 
-    // Olho composto nas laterais da cabeça — proporcional (nunca gigante).
+    // Olho composto nas laterais da cabeça - proporcional (nunca gigante).
     ctx.beginPath();
     ctx.ellipse(0.6, 3 * side, 2.1, 1.35, 0.25 * side, 0, Math.PI * 2);
     ctx.fillStyle = colors.eye;
@@ -521,7 +521,7 @@ function drawHeadDetails(ctx, pose, colors, seed) {
     ctx.fill();
   });
 
-  // Probóscide — só aparece/estende quando mouthOpen > 0, para a frente.
+  // Probóscide - só aparece/estende quando mouthOpen > 0, para a frente.
   const mouthOpen = pose.mouthOpen || 0;
   if (mouthOpen > 0.02) {
     strokeHandDrawn(ctx, [

@@ -1,10 +1,10 @@
-// MenuState — menu principal: Novo Jogo / Continuar / Configurações.
+// MenuState - menu principal: Novo Jogo / Continuar / Configurações.
 // Vertical primeiro: prancha da operária + título no alto e botões grandes (≥ 56px)
 // empilhados na metade inferior (zona do polegar). Em tela larga: título e botões
 // numa coluna à esquerda, prancha à direita.
 // Toque/clique ativa; teclado (setas + Enter, Esc volta) continua funcionando no PC.
 // "Continuar" fica visualmente desabilitado sem save. "Novo Jogo" com save existente
-// pede confirmação de sobrescrita. Configurações = painel simples (sem função real ainda).
+// pede confirmação de sobrescrita. Configurações de áudio persistentes.
 
 import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
@@ -121,7 +121,43 @@ function computeLayout(context) {
     modalButtons = [{ id: 'back', label: 'Voltar', rect: { x: card.x + (cardW - w) / 2, y: by, w, h: mbH } }]
   }
 
-  return { L, S, u, wide, plate, titleX, titleY, titleSize, align, buttons, card, modalButtons, pad }
+  if (mode === 'settings') {
+    const audio = context.audio
+    const rowGap = 8
+    const headingH = 54
+    const rowH = Math.max(44, Math.min(56, (S.h - 72 - headingH - 4 * rowGap) / 5))
+    card.h = headingH + 5 * rowH + 4 * rowGap + 32
+    card.y = S.y + (S.h - card.h) / 2
+    const x = card.x + 16
+    const y = card.y + headingH
+    const w = card.w - 32
+    const rect = row => ({ x, y: y + row * (rowH + rowGap), w, h: rowH })
+    const volume = Math.round((audio?.volume ?? 0.45) * 100)
+    modalButtons = [
+      { id: 'music', label: `Música: ${audio?.muted ? 'desligada' : 'ligada'}`, rect: rect(0) },
+      { id: 'quieter', label: 'Volume -', rect: { ...rect(1), w: (w - rowGap) / 2 } },
+      { id: 'louder', label: `${volume}% +`, rect: { ...rect(1), x: x + (w + rowGap) / 2, w: (w - rowGap) / 2 } },
+      { id: 'effects', label: `Efeitos: ${audio?.effectsEnabled === false ? 'desligados' : 'ligados'}`, rect: rect(2) },
+      { id: 'replay', label: 'Rever abertura', rect: rect(3) },
+      { id: 'back', label: 'Voltar', rect: rect(4) },
+    ]
+    if (S.h < 390 && S.w >= 540) {
+      card.w = Math.min(620, S.w - 32)
+      card.x = S.x + (S.w - card.w) / 2
+      card.h = headingH + 3 * 48 + 2 * rowGap + 24
+      card.y = S.y + (S.h - card.h) / 2
+      const columnW = (card.w - 40) / 2
+      modalButtons.forEach((button, i) => {
+        button.rect = {
+          x: card.x + 16 + (i % 2) * (columnW + rowGap),
+          y: card.y + headingH + Math.floor(i / 2) * (48 + rowGap),
+          w: columnW, h: 48,
+        }
+      })
+    }
+    if (!audio?.available) modalButtons.slice(0, 4).forEach(b => { b.disabled = true })
+  }
+  return { L, S, u, wide, plate, titleX, titleY, titleSize, align, buttons, card, modalButtons, pad, audioAvailable: !!context.audio?.available }
 }
 
 const CONFIRM_TEXT = 'A vida registrada até agora será apagada e uma nova operária nascerá.'
@@ -152,6 +188,22 @@ function activate(context, id) {
     case 'settings':
       mode = 'settings'
       modalSelected = 0
+      break
+    case 'music':
+      context.audio?.toggleMuted()
+      break
+    case 'quieter':
+      context.audio?.setVolume(context.audio.volume - 0.1)
+      break
+    case 'louder':
+      context.audio?.setVolume(context.audio.volume + 0.1)
+      break
+    case 'effects':
+      context.audio?.setEffectsEnabled(!context.audio.effectsEnabled)
+      if (context.audio?.effectsEnabled) context.audio.playResult(1)
+      break
+    case 'replay':
+      context.goTo?.('intro')
       break
     case 'confirmNew':
       mode = 'main'
@@ -213,16 +265,18 @@ export default {
       const hi = mb.findIndex((b) => pointInRect(pointer, b.rect))
       if (hi >= 0) modalSelected = hi
     }
-    if (anyKeyPressed(input, ['ArrowLeft', 'ArrowUp'])) modalSelected = Math.max(0, modalSelected - 1)
-    if (anyKeyPressed(input, ['ArrowRight', 'ArrowDown'])) modalSelected = Math.min(mb.length - 1, modalSelected + 1)
+    if (anyKeyPressed(input, ['ArrowLeft', 'ArrowUp'])) modalSelected = nextEnabled(mb, modalSelected, -1)
+    if (anyKeyPressed(input, ['ArrowRight', 'ArrowDown'])) modalSelected = nextEnabled(mb, modalSelected, 1)
     modalSelected = Math.min(modalSelected, mb.length - 1)
+    if (mb[modalSelected]?.disabled) modalSelected = nextEnabled(mb, modalSelected, 1)
     if (anyKeyPressed(input, ['Escape'])) {
       activate(context, mode === 'confirm' ? 'cancel' : 'back')
       return
     }
     for (const c of clicks) {
-      const hit = mb.find((b) => pointInRect(c, grow(b.rect, g)))
-      if (hit) {
+      const hit = mb.find((b) => pointInRect(c, grow(b.rect, mode === 'settings' ? 0 : g)))
+      if (hit && !hit.disabled) {
+        modalSelected = mb.indexOf(hit)
         activate(context, hit.id)
         return
       }
@@ -310,7 +364,7 @@ function drawPlate(ctx, plate, time, u) {
   ctx.textAlign = 'center'
   ctx.font = font(Math.max(12 * u, R * 0.06))
   setLetterSpacing(ctx, 2)
-  ctx.fillText('FIG. 1 — OPERÁRIA', cx, cy - R * 1.16)
+  ctx.fillText('FIG. 1 - OPERÁRIA', cx, cy - R * 1.16)
   setLetterSpacing(ctx, 0)
   ctx.restore()
 
@@ -338,22 +392,13 @@ function drawModal(ctx, M, w, h) {
   } else {
     ctx.font = font(23 * u)
     ctx.fillText('Configurações', cx, card.y + pad + 26 * u)
-    const rows = ['Volume da música', 'Efeitos sonoros', 'Tamanho do texto']
-    rows.forEach((label, i) => {
-      const y = card.y + pad + 76 * u + i * 48 * u
-      ctx.globalAlpha = 0.92
-      ctx.font = font(16 * u)
-      ctx.textAlign = 'left'
-      ctx.fillText(label, card.x + pad, y)
-      ctx.textAlign = 'right'
-      ctx.font = font(13.5 * u, { style: 'italic' })
-      ctx.globalAlpha = 0.65
-      ctx.fillText('em breve', card.x + card.w - pad, y)
-      drawGuideLine(ctx, card.x + pad, y + 12 * u, card.x + card.w - pad, y + 12 * u, { alpha: 0.25 })
-    })
+    if (!M.audioAvailable) {
+      ctx.font = font(11 * u)
+      ctx.fillText('Áudio indisponível neste navegador', cx, card.y + 49)
+    }
   }
   ctx.restore()
   M.modalButtons.forEach((b, i) => {
-    drawButton(ctx, b.rect, b.label, { focused: i === modalSelected, time: t })
+    drawButton(ctx, b.rect, b.label, { focused: i === modalSelected, disabled: b.disabled, time: t })
   })
 }

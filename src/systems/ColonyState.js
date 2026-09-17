@@ -1,23 +1,23 @@
-// ColonyState — estado dos indicadores da colônia (lógica pura, sem I/O).
+// ColonyState - estado dos indicadores da colônia (lógica pura, sem I/O).
 //
 // API pública:
 //   new ColonyState(overrides?)
-//     Campos (todos number, clampados 0–100): population, nectar, pollen,
+//     Campos (todos number, clampados 0-100): population, nectar, pollen,
 //     propolis, wax, health. `overrides` é um objeto parcial opcional com
 //     qualquer um desses campos (usado também por deserialize).
 //   applyTaskResult(taskType, score): void
 //     Aplica o resultado de UM turno jogado. `taskType` é um dos ranks de
 //     TaskSystem ('larva' | 'cleaning' | 'feedLarvae' | 'feedQueen' | 'guard');
-//     `score` é a pontuação do turno em escala 0–100 (50 = neutro). Cada tipo
-//     de tarefa afeta indicadores diferentes — ver regras comentadas abaixo.
+//     `score` é a pontuação do turno em escala 0-100 (50 = neutro). Cada tipo
+//     de tarefa afeta indicadores diferentes - ver regras comentadas abaixo.
 //   tickDecay(dt = 1): void
 //     Decaimento/recuperação gradual em background (ex.: 1x por dia-jogável,
 //     dt = número de dias). Néctar/pólen/cera/própolis caem lentamente com o
 //     tempo (taxas em data/config.js); saúde reage à fartura de recursos; e
 //     população cresce devagar se a colônia estiver saudável, ou declina se
 //     a saúde estiver crítica.
-//   serialize(): object — objeto plano serializável (JSON-safe).
-//   static deserialize(data): ColonyState — reconstrói uma instância a partir
+//   serialize(): object - objeto plano serializável (JSON-safe).
+//   static deserialize(data): ColonyState - reconstrói uma instância a partir
 //     do objeto salvo (campos ausentes caem nos defaults do construtor).
 
 import { config } from '../data/config.js';
@@ -67,7 +67,7 @@ export default class ColonyState {
 
       case 'feedLarvae':
         // Alimentar larvas afeta a população futura (cria que sobrevive até
-        // a fase adulta) e consome pólen — bom desempenho desperdiça menos.
+        // a fase adulta) e consome pólen - bom desempenho desperdiça menos.
         this.population = clamp(this.population + perf * 10);
         this.pollen = clamp(this.pollen - (6 - perf * 4));
         break;

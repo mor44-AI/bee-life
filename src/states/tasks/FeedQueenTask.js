@@ -5,7 +5,7 @@
 //    a cerca, disputa a frente da cabeça e empurra a operária do jogador.
 //  - Para alimentar: estar dentro do cone à frente da cabeça (arco técnico fino)
 //    enquanto a boca está aberta (TimingWindow). Aí surge uma sequência de direções
-//    (ComboInput, relógio do jogo) — direcionais grandes do Controls (celular) ou
+//    (ComboInput, relógio do jogo) - direcionais grandes do Controls (celular) ou
 //    setas (PC). Os direcionais só aparecem enquanto o combo está ativo.
 //  - Carga de alimento limitada; reabastece-se nos potes de mel na borda da câmara.
 //  - Fome da rainha (Gauge) sobe sempre; em estado crítico ela para de pôr ovos
@@ -13,14 +13,14 @@
 //  - Especial "Abrir caminho" (SpecialMeter: carga passiva ~20s + bônus por combo):
 //    uma onda parte da operária e dispersa o séquito para a borda da câmara; por ~6s
 //    as atendentes não empurram nem bloqueiam e depois voltam devagar.
-//  - Dificuldade: data.difficulty (0–1, difficultyFor) + inShiftRamp dentro do turno.
+//  - Dificuldade: data.difficulty (0-1, difficultyFor) + inShiftRamp dentro do turno.
 
 import createMovement from '../../engine/MovementController.js'
 import createGauge from '../../engine/Gauge.js'
 import createTimingWindow from '../../engine/TimingWindow.js'
 import createCombo from '../../engine/ComboInput.js'
 import { create as createMeter } from '../../engine/SpecialMeter.js'
-import { difficultyFor, inShiftRamp } from '../../data/config.js'
+import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
 import { ease, lerp } from '../../engine/tween.js'
 import { drawBeeBody, createIdlePose, createRegurgitatePose } from '../../art/bee.js'
 import { drawComb } from '../../art/hive.js'
@@ -39,9 +39,9 @@ import { styleGuide } from '../../data/styleGuide.js'
 
 const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
-const SHIFT_DURATION = 60
+const SHIFT_DURATION = config.shiftDuration
 const MAX_CHARGE = 3
-const EXPECTED_FEEDS = 13
+const EXPECTED_FEEDS = Math.round(13 * config.durationScale)
 const SPECIAL_CHARGE_TIME = 20
 const SPECIAL_DURATION = 6
 const WAVE_DUR = 0.75
@@ -200,7 +200,7 @@ function buildBackground(L, dpr) {
     })
   }
 
-  // Fragmentos de favo de cria nos cantos (fora da câmara; só com painéis laterais — no retrato ficariam sob os botões).
+  // Fragmentos de favo de cria nos cantos (fora da câmara; só com painéis laterais - no retrato ficariam sob os botões).
   if (L.sidePanels) {
   g.save()
   g.globalAlpha = 0.45
@@ -678,7 +678,8 @@ function makeWindow(level) {
   const lv = tier / 10
   st.windowSize = 1.3 + comboLengthAt(lv) * lerp(0.75, 0.62, lv)
   st.window = createTimingWindow({
-    periodRange: [lerp(2.4, 1.3, lv), lerp(3.6, 3.4, lv)],
+    // Intervalos menores criam mais oportunidades sem encurtar o tempo do combo.
+    periodRange: [lerp(0.55, 0.35, lv), lerp(1.0, 0.75, lv)],
     windowSize: st.windowSize,
     jitter: lerp(0.08, 0.4, lv),
   })
@@ -1516,7 +1517,7 @@ function drawQueen(ctx) {
   ctx.clip()
   const twitch = q.anticip * Math.sin(t * 38) * 0.06
   const pose = createIdlePose(0, 0, { t, colorVariant: 'young', scale: hts, rotation: 0, seed: 1234 })
-  pose.wingAngle = 0 // asas próprias (queenWing) — as de bee.js ficam fechadas e recortadas
+  pose.wingAngle = 0 // asas próprias (queenWing) - as de bee.js ficam fechadas e recortadas
   pose.legPhase = q.legPhase
   pose.mouthOpen = q.mouth
   pose.headTilt = Math.sin(t * 0.5) * 0.04 + twitch

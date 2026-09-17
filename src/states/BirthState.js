@@ -1,4 +1,4 @@
-// BirthState — nascimento (~7.5s): célula de cria sob uma "lente" de instrumento
+// BirthState - nascimento (~7.5s): célula de cria sob uma "lente" de instrumento
 // técnico, passando por ovo → larva → pupa (corte lateral) → abelha jovem
 // emergindo. Pulável tocando/clicando em qualquer lugar ou por tecla. Termina com
 // context.completeBirth(). Composição na área segura, vertical primeiro.
@@ -213,7 +213,7 @@ export default {
       }
     }
 
-    // Legenda dos estágios (escala horizontal com marcador rosa — acento único).
+    // Legenda dos estágios (escala horizontal com marcador rosa - acento único).
     const legendW = Math.min(420 * u, SA.w - 100)
     const lx0 = cx - legendW / 2
     const ly = cy + lensR * 1.12 + 44

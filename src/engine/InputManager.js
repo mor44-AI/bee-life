@@ -1,10 +1,10 @@
 // API pública:
 //   new InputManager(canvas)
 //     Escuta eventos crus de ponteiro (mouse/toque/caneta) e teclado no canvas/window.
-//     NÃO tem semântica de jogo (sem botões virtuais, sem drag-and-drop) — isso é
+//     NÃO tem semântica de jogo (sem botões virtuais, sem drag-and-drop) - isso é
 //     responsabilidade de quem consome (ex. src/ui/Controls.js, MovementController).
 //
-//   COORDENADAS: tudo já normalizado para o espaço "lógico" do canvas — o mesmo em
+//   COORDENADAS: tudo já normalizado para o espaço "lógico" do canvas - o mesmo em
 //   que o Renderer desenha (CSS px, canvas.width/devicePixelRatio), compensando
 //   resize e DPI via getBoundingClientRect(). Convenção combinada com Renderer.js.
 //
@@ -160,7 +160,7 @@ export default class InputManager {
         try {
           canvas.setPointerCapture(e.pointerId)
         } catch {
-          /* alguns navegadores recusam captura — sem problema */
+          /* alguns navegadores recusam captura - sem problema */
         }
         this._down(e.pointerId, e.clientX, e.clientY, e.pointerType || 'mouse', e.button)
       }

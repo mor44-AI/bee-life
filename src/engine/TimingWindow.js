@@ -2,7 +2,7 @@
 //   create({ periodRange = [1, 2], windowSize = 0.3, jitter = 0.25 })
 //     -> timingWindow (também default export)
 //     periodRange: [min, max] segundos entre o fim de uma janela e a abertura da
-//       próxima — sorteado a cada ciclo (Math.random), não é um metrônomo fixo.
+//       próxima - sorteado a cada ciclo (Math.random), não é um metrônomo fixo.
 //     windowSize: duração base (segundos) em que a janela fica aberta; também recebe
 //       variação orgânica de até `jitter` (fração) a cada abertura.
 //   timingWindow.update(dt) -> void
@@ -17,8 +17,8 @@
 //   timingWindow.phase -> 'closed' | 'open'
 //   timingWindow.timeUntilOpen -> number (s até abrir; 0 quando aberta)
 //   timingWindow.timeUntilClose -> number (s até fechar; 0 quando fechada)
-//   timingWindow.openProgress -> number 0–1 (progresso DENTRO da janela aberta; 0 fechada)
-//   timingWindow.closedProgress -> number 0–1 (progresso da espera fechada; 0 aberta)
+//   timingWindow.openProgress -> number 0-1 (progresso DENTRO da janela aberta; 0 fechada)
+//   timingWindow.closedProgress -> number 0-1 (progresso da espera fechada; 0 aberta)
 //   timingWindow.windowDuration -> number (duração da janela atual/mais recente, s)
 //   timingWindow.timeToCenter -> number (s até o centro da próxima/atual janela;
 //     negativo = centro já passou). Com a janela fechada usa windowSize nominal.

@@ -1,11 +1,11 @@
-// Tarefa: LIMPEZA — navegação + interceptação por reflexo no interior lotado da colmeia.
+// Tarefa: LIMPEZA - navegação + interceptação por reflexo no interior lotado da colmeia.
 //
 // A operária jovem recolhe detritos (cria morta, restos de cera) do favo e os
 // leva até a entrada, desviando do trânsito das companheiras (colidir carregando
 // = pode derrubar a carga). Larvas de traça-de-cera surgem em células, fogem de
 // forma errática e roem o favo enquanto vivas (dano visível e crescente).
 //
-// Controles (via context.controls — celular e PC):
+// Controles (via context.controls - celular e PC):
 //   mover   = arrastar o dedo/mouse (a abelha segue) ou WASD/setas.
 //   Ação    = botão AÇÃO / Espaço: sem carga = investida curta rumo ao alvo mais
 //             próximo; com carga = largar o detrito. Tocar numa traça = investida nela.
@@ -17,7 +17,7 @@
 // direita). No retrato (design principal) o mundo é girado 90° para caber em
 // context.layout.playfield com a entrada no topo; em paisagem fica centralizado.
 //
-// Dificuldade: data.difficulty (0–1) é a fonte da verdade entre turnos; dentro do
+// Dificuldade: data.difficulty (0-1) é a fonte da verdade entre turnos; dentro do
 // turno usa inShiftRamp (primeiros ~10 s tranquilos).
 
 import { create as createMovement } from '../../engine/MovementController.js'
@@ -40,11 +40,11 @@ import {
   INK_LINE,
 } from '../../art/textureUtils.js'
 import { styleGuide } from '../../data/styleGuide.js'
-import { difficultyFor, inShiftRamp } from '../../data/config.js'
+import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
 
 const PAL = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
-const SHIFT_DURATION = 60
+const SHIFT_DURATION = config.shiftDuration
 const END_FADE = 1.5
 const RESIN_DURATION = 6
 const WAVE_EXPAND = 0.9
@@ -475,7 +475,7 @@ function paintMark(m) {
 }
 
 // ---------------------------------------------------------------------------
-// Dificuldade — tudo deriva de st.D (data.difficulty) + rampa dentro do turno.
+// Dificuldade - tudo deriva de st.D (data.difficulty) + rampa dentro do turno.
 // ---------------------------------------------------------------------------
 
 function difficulty() {
@@ -508,7 +508,7 @@ function difficulty() {
 
 function deliverTarget() {
   // Carregar fica mais pesado com a dificuldade, então a meta cai um pouco.
-  return Math.round(15 - 3 * st.D)
+  return Math.round((15 - 3 * st.D) * config.durationScale)
 }
 
 // ---------------------------------------------------------------------------
@@ -1652,7 +1652,7 @@ function renderHint(ctx, context) {
       : 'WASD/setas ou mouse · encoste para pegar · leve à entrada'
     alpha = clamp(Math.min(t / 0.5, (6 - t) / 0.8), 0, 1)
   } else if (st.meter.isReady && st.meter.readyTime < 3.5 && st.resinUses === 0) {
-    msg = context.controls.isTouch ? 'resina pronta — toque RESINA' : 'resina pronta — tecla E'
+    msg = context.controls.isTouch ? 'resina pronta - toque RESINA' : 'resina pronta - tecla E'
     alpha = clamp(Math.min(st.meter.readyTime / 0.4, (3.5 - st.meter.readyTime) / 0.6), 0, 1)
   }
   if (!msg || alpha <= 0) return

@@ -1,156 +1,226 @@
-// IntroState — PLACEHOLDER da abertura (a cinemática final de 20–30s é de outra onda).
-// ~4s: sobre o papel naturalista, os elementos de "instrumento técnico" se desenham
-// progressivamente (círculos concêntricos, transferidor, guias pontilhadas, uma
-// célula hexagonal) e o título "Vida de Abelha" surge. Pulável tocando/clicando em
-// qualquer lugar ou por tecla. Composição centrada na área segura (vertical primeiro).
+// Abertura procedural de 26 segundos, em estilo de caderno naturalista.
+import { drawCell } from '../art/hive.js'
+import { drawBeeBody, createIdlePose, createFlightPose, createCarryingPose, createRegurgitatePose } from '../art/bee.js'
+import { drawAnt, createAntPose } from '../art/creatures.js'
+import { strokeHandDrawn, drawHatching } from '../art/textureUtils.js'
+import { UI, font, drawDottedCircle, drawScaleArc, drawGuideLine } from '../ui/IndicatorBar.js'
+import { createPaperBackdrop, createLayerCache, screenLayout, safeRect, anyKeyPressed, drawButton, pointInRect, fadeScreen, wrapText } from '../ui/HUD.js'
 
-import { ease } from '../engine/tween.js'
-import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
-import {
-  createPaperBackdrop,
-  fadeScreen,
-  screenLayout,
-  safeRect,
-  uiScaleOf,
-  anyKeyPressed,
-  isTouchUI,
-  drawHint,
-} from '../ui/HUD.js'
-import { strokeHandDrawn, polygonPoints } from '../art/textureUtils.js'
-
-const DURATION = 4.2
-const FADE_OUT = 0.6
+export const INTRO_DURATION = 26
 const SKIP_KEYS = ['Enter', 'Space', 'Escape', 'NumpadEnter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
-
+const scenes = [
+  { at: 0, end: 7, title: 'Uma vida começa', caption: 'Ovo, larva, pupa. Uma nova operária emerge.' },
+  { at: 7, end: 10.5, title: 'Cuidar da casa', caption: 'As jovens operárias mantêm o ninho limpo.' },
+  { at: 10.5, end: 14, title: 'Nutrir a próxima geração', caption: 'O alimento abastece as células de cria.' },
+  { at: 14, end: 17.5, title: 'Sustentar a rainha', caption: 'De boca em boca, a colônia compartilha alimento.' },
+  { at: 17.5, end: 21, title: 'Guardar a entrada', caption: 'Cada guardiã protege a vida dentro do ninho.' },
+  { at: 21, end: 24, title: 'O ciclo continua', caption: 'A rainha deposita um ovo na célula abastecida.' },
+  { at: 24, end: 26, title: 'Vida de Abelha', caption: 'Mandaçaia · Melipona quadrifasciata' },
+]
 const backdrop = createPaperBackdrop({ seed: 7 })
+const clamp = v => Math.max(0, Math.min(1, v))
+const smooth = v => { const p = clamp(v); return p * p * (3 - 2 * p) }
 let t = 0
-let leaving = -1
-
-const seg = (time, a, b) => ease(Math.max(0, Math.min(1, (time - a) / (b - a))), 'easeInOutCubic')
-
+let done = false
+function soundButton(context) {
+  const S = safeRect(screenLayout(context))
+  return { x: S.x + S.w / 2 - 145, y: S.y + S.h - 41, w: 140, h: 33 }
+}
+const cells = Object.fromEntries(['egg', 'larva', 'capped', 'empty', 'honey'].map(state => [state,
+  createLayerCache((ctx, w, h) => drawCell(ctx, { x: w / 2, y: h / 2, size: w / 2.5, seed: 17 }, state)),
+]))
+function cell(ctx, x, y, size, state = 'empty') {
+  cells[state].draw(ctx, x - size * 1.25, y - size * 1.25, size * 2.5, size * 2.5)
+}
+function bee(ctx, x, y, time, options = {}) {
+  drawBeeBody(ctx, createIdlePose(x, y, { t: time, scale: 2.3, seed: 4, ...options }))
+}
+function drop(ctx, x, y, size = 5, color = UI.gold) {
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.ellipse(x, y, size * 0.65, size, 0.2, 0, Math.PI * 2)
+  ctx.fill()
+}
+function queen(ctx, x, y, time) {
+  ctx.save()
+  ctx.translate(x, y)
+  // Abdomen enlarged and segmented, preserving the naturalist bee rig.
+  const pulse = 1 + Math.sin(time * 2) * 0.018
+  ctx.save()
+  ctx.scale(pulse, pulse)
+  ctx.beginPath()
+  ctx.ellipse(-40, 0, 65, 32, 0, 0, Math.PI * 2)
+  ctx.fillStyle = '#B89961'
+  ctx.fill()
+  ctx.strokeStyle = UI.ink
+  ctx.lineWidth = 1.5
+  ctx.stroke()
+  ctx.clip()
+  drawHatching(ctx, { x: -110, y: -34, width: 142, height: 68 }, { seed: 23, lineCount: 36, angle: 0.3, opacityRange: [0.12, 0.25], color: UI.ink })
+  for (let k = 0; k < 6; k++) {
+    ctx.beginPath()
+    ctx.ellipse(-83 + k * 22, 0, 10, 35, 0, -Math.PI / 2, Math.PI / 2)
+    ctx.strokeStyle = '#715731'
+    ctx.lineWidth = 3
+    ctx.stroke()
+  }
+  ctx.restore()
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(-12, -75, 105, 150)
+  ctx.clip()
+  bee(ctx, 3, 0, time, { scale: 3, colorVariant: 'old' })
+  ctx.restore()
+  ctx.restore()
+}
+function development(ctx, time) {
+  const stage = time < 1.5 ? 'egg' : time < 3 ? 'larva' : time < 4.7 ? 'capped' : 'empty'
+  cell(ctx, 0, 8, 76, stage)
+  if (time >= 3 && time < 4.7) {
+    // Pale pupa visible through an illustrated cutaway in the wax cap.
+    ctx.save()
+    ctx.beginPath()
+    ctx.ellipse(0, 8, 51, 61, 0, 0, Math.PI * 2)
+    ctx.fillStyle = '#E5D8B8'
+    ctx.fill()
+    ctx.clip()
+    bee(ctx, 0, 6, 0, { scale: 2.5, rotation: -Math.PI / 2, colorVariant: 'young' })
+    ctx.fillStyle = 'rgba(244,238,221,0.6)'
+    ctx.fillRect(-60, -60, 120, 140)
+    ctx.restore()
+  }
+  if (time >= 4.7) {
+    const p = smooth((time - 4.7) / 1.7)
+    drawBeeBody(ctx, createFlightPose(0, 8 - p * 82, time, { scale: 2.6, rotation: -Math.PI / 2, colorVariant: 'young' }))
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4
+      drop(ctx, Math.cos(a) * (40 + p * 50), 8 + Math.sin(a) * (40 + p * 50), 3 * (1 - p), '#A48342')
+    }
+  }
+  const active = time < 1.5 ? 0 : time < 3 ? 1 : time < 4.7 ? 2 : 3
+  ctx.font = font(16)
+  ctx.textAlign = 'center'
+  ;['ovo', 'larva', 'pupa', 'operária'].forEach((label, i) => {
+    ctx.fillStyle = i === active ? UI.ink : '#81745B'
+    ctx.fillText(label, -165 + i * 110, 141)
+    if (i === active) drop(ctx, -165 + i * 110, 117, 3, UI.pink)
+  })
+}
+function cleaning(ctx, time) {
+  cell(ctx, -135, 48, 37)
+  cell(ctx, -115, -46, 37, 'capped')
+  const p = smooth(time / 2.8)
+  const x = -92 + p * 255
+  drawBeeBody(ctx, createCarryingPose(x, -8 - Math.sin(p * Math.PI) * 33, time, { scale: 2.5, cargo: 'wax' }))
+  drop(ctx, x + 37, 12 - Math.sin(p * Math.PI) * 33, 9, '#6E5219')
+  strokeHandDrawn(ctx, [{ x: 208, y: -80 }, { x: 187, y: -44 }, { x: 186, y: 42 }, { x: 211, y: 80 }], { baseWidth: 6, seed: 4, color: '#8C7447' })
+  drawGuideLine(ctx, -30, 80, 170, 80, { progress: p, alpha: 0.4 })
+}
+function nursing(ctx, time) {
+  ;[-120, 0, 120].forEach((x, i) => cell(ctx, x, 63, 38, time > 1 + i * 0.8 ? 'honey' : 'empty'))
+  const x = -120 + 240 * smooth(time / 3.1)
+  drawBeeBody(ctx, createRegurgitatePose(x, -24, time, { scale: 2.5, rotation: Math.PI / 2, colorVariant: 'young' }))
+  drop(ctx, x, 20 + (time * 45 % 30), 5)
+}
+function feedingQueen(ctx, time) {
+  queen(ctx, -67, 12, time)
+  drawBeeBody(ctx, createRegurgitatePose(80, 12, time, { scale: 2.3, rotation: Math.PI }))
+  drawBeeBody(ctx, createCarryingPose(180, -55 + Math.sin(time) * 5, time, { scale: 1.8, rotation: Math.PI, cargo: 'nectar' }))
+  drop(ctx, 39 + Math.sin(time * 4) * 5, 12, 5)
+  cell(ctx, 180, 72, 28, 'honey')
+}
+function guarding(ctx, time) {
+  ctx.fillStyle = '#A68A55'
+  ctx.beginPath()
+  ctx.ellipse(-123, 0, 83, 111, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#4B3B25'
+  ctx.beginPath()
+  ctx.ellipse(-115, 0, 45, 75, 0, 0, Math.PI * 2)
+  ctx.fill()
+  const intercept = smooth(time / 1.6)
+  bee(ctx, -65 + intercept * 90, 0, time, { scale: 2.8, colorVariant: 'old' })
+  const retreat = smooth((time - 1.6) / 1.3)
+  drawAnt(ctx, createAntPose(185 - intercept * 90 + retreat * 115, 10 + retreat * 40, time, { scale: 2.7, rotation: retreat > 0.15 ? 0 : Math.PI }))
+}
+function laying(ctx, time) {
+  const p = smooth((time - 0.8) / 1.4)
+  cell(ctx, -80, 24, 48, p > 0.75 ? 'egg' : 'honey')
+  cell(ctx, -169, 83, 31, 'capped')
+  cell(ctx, 3, 93, 31, 'larva')
+  queen(ctx, 19 + smooth((time - 1.9) / 0.8) * 80, -16, time)
+  if (p > 0 && p < 0.8) drop(ctx, -84, -12 + p * 46, 9, '#F0EAD8')
+  bee(ctx, 162, 70, time, { scale: 1.8, rotation: Math.PI })
+}
+const painters = [development, cleaning, nursing, feedingQueen, guarding, laying,
+  (ctx, time) => {
+    cell(ctx, -90, 35, 42, 'egg')
+    cell(ctx, 0, 58, 42, 'larva')
+    cell(ctx, 90, 35, 42, 'capped')
+    drawBeeBody(ctx, createFlightPose(0, -58 + Math.sin(time) * 8, time, { scale: 3.2, rotation: -0.15 }))
+  },
+]
 export default {
   enter(context) {
     t = 0
-    leaving = -1
+    done = false
     context.input.consumeClicks()
+    context.audio?.startIntro?.()
   },
-
   update(context, dt) {
     t += dt
-    const skip = context.input.consumeClicks().length > 0 || anyKeyPressed(context.input, SKIP_KEYS)
-    if (skip) {
-      context.goTo('menu')
-      return
+    let clickedSkip = false
+    for (const click of context.input.consumeClicks()) {
+      if (pointInRect(click, soundButton(context))) {
+        context.audio?.setMuted?.(false)
+        context.audio?.unlock?.()
+      } else clickedSkip = true
     }
-    if (leaving < 0 && t >= DURATION) leaving = t
-    if (leaving >= 0 && t - leaving >= FADE_OUT) context.goTo('menu')
+    const skip = clickedSkip || anyKeyPressed(context.input, SKIP_KEYS)
+    if (!done && (skip || t >= INTRO_DURATION)) {
+      done = true
+      context.goTo('menu')
+    }
   },
-
   render(context, ctx) {
-    const w = context.width
-    const h = context.height
+    const { width: w, height: h } = context
     backdrop.draw(ctx, 0, 0, w, h)
     const L = screenLayout(context)
     const S = safeRect(L)
-    const u = uiScaleOf(L)
-    const portrait = S.h > S.w
-
-    const titleSize = portrait ? Math.max(34, Math.min(60, S.w * 0.115)) : Math.max(34, Math.min(76, S.w * 0.075))
+    const i = Math.max(0, scenes.findLastIndex(scene => t >= scene.at))
+    const scene = scenes[i]
+    const local = t - scene.at
     const cx = S.x + S.w / 2
-    // Diagrama + título (≈ R·2.5 + 2·título) centralizados verticalmente.
-    const R = portrait ? Math.min(S.w * 0.34, S.h * 0.2) : Math.min(S.w, S.h) * 0.28
-    const blockH = R * 2.5 + titleSize * 1.9
-    const cy = S.y + Math.max(R * 1.2 + 10, (S.h - blockH) / 2 + R * 1.15)
-
-    // Guias pontilhadas horizontais/verticais.
-    drawGuideLine(ctx, cx - R * 1.9, cy, cx + R * 1.9, cy, { progress: seg(t, 0.1, 1.4), alpha: 0.25 })
-    drawGuideLine(ctx, cx, cy - R * 1.35, cx, cy + R * 1.35, { progress: seg(t, 0.3, 1.5), alpha: 0.2 })
-
-    // Círculos concêntricos.
-    drawDottedCircle(ctx, cx, cy, R * 1.12, { progress: seg(t, 0.2, 1.6), alpha: 0.3 })
+    const cy = S.y + S.h * 0.46
+    const scale = Math.max(0.2, Math.min((S.w - 30) / 560, (S.h - 150) / 380, 1.8))
     ctx.save()
-    ctx.strokeStyle = UI.ink
-    ctx.lineWidth = 1
-    ctx.globalAlpha = 0.45
-    ctx.beginPath()
-    ctx.arc(cx, cy, R, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * seg(t, 0.4, 1.9))
-    ctx.stroke()
-    ctx.globalAlpha = 0.22
-    ctx.beginPath()
-    ctx.arc(cx, cy, R * 0.72, Math.PI / 2, Math.PI / 2 + Math.PI * 2 * seg(t, 0.7, 2.1))
-    ctx.stroke()
+    ctx.translate(cx, cy)
+    ctx.scale(scale, scale)
+    drawGuideLine(ctx, -263, 0, 263, 0, { alpha: 0.16 })
+    drawDottedCircle(ctx, 0, 0, 155, { alpha: 0.24, progress: smooth(local / 0.7) })
+    drawScaleArc(ctx, 0, 0, 169, Math.PI * 1.05, Math.PI * 1.95, { ticks: 32, majorEvery: 4, alpha: 0.42, progress: smooth(local / 0.8) })
+    painters[i](ctx, local)
     ctx.restore()
-
-    // Transferidor superior com escala.
-    drawScaleArc(ctx, cx, cy, R * 0.9, Math.PI * 1.1, Math.PI * 1.9, {
-      progress: seg(t, 0.8, 2.2),
-      ticks: 36,
-      majorEvery: 6,
-      tickLen: 4,
-      majorLen: 9,
-      alpha: 0.55,
-    })
-
-    // Célula hexagonal no centro, contorno de mão revelado ponto a ponto.
-    const hp = seg(t, 1.2, 2.4)
-    if (hp > 0) {
-      const pts = polygonPoints(cx, cy, R * 0.34, R * 0.34, 6, { rotation: Math.PI / 6, jitter: 0.04, seed: 5 })
-      const n = Math.max(2, Math.round(hp * 7))
-      const path = []
-      for (let i = 0; i < n; i++) path.push(pts[i % 6])
-      ctx.save()
-      ctx.globalAlpha = 0.18 * hp
-      ctx.fillStyle = UI.gold
-      ctx.beginPath()
-      pts.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)))
-      ctx.closePath()
-      ctx.fill()
-      ctx.restore()
-      strokeHandDrawn(ctx, path, { baseWidth: 1.6, seed: 9, opacity: 0.8 })
-    }
-
-    // Ponteiro — o único acento rosa da cena.
-    const np = seg(t, 1.8, 3.0)
-    if (np > 0) {
-      const a = Math.PI * 1.1 + Math.PI * 0.8 * (0.15 + 0.5 * np)
-      ctx.save()
-      ctx.strokeStyle = UI.pink
-      ctx.lineWidth = 1.4
-      ctx.lineCap = 'round'
-      ctx.globalAlpha = np
-      ctx.beginPath()
-      ctx.moveTo(cx, cy)
-      ctx.lineTo(cx + Math.cos(a) * R * 0.98, cy + Math.sin(a) * R * 0.98)
-      ctx.stroke()
-      ctx.fillStyle = UI.pink
-      ctx.beginPath()
-      ctx.arc(cx, cy, 2.6, 0, Math.PI * 2)
-      ctx.fill()
-      ctx.restore()
-    }
-
-    // Título.
-    const tp = seg(t, 2.0, 3.3)
     ctx.save()
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
     ctx.fillStyle = UI.ink
-    ctx.globalAlpha = tp
-    ctx.font = font(titleSize)
-    setLetterSpacing(ctx, 1 + (1 - tp) * 10)
-    ctx.fillText('Vida de Abelha', cx, cy + R * 1.32 + (1 - tp) * 8)
-    setLetterSpacing(ctx, 0)
-    const sp = seg(t, 2.8, 3.8)
-    ctx.globalAlpha = sp * 0.85
-    ctx.font = font(Math.max(14 * u, titleSize * 0.28), { style: 'italic' })
-    ctx.fillText('Mandaçaia · Melipona quadrifasciata', cx, cy + R * 1.32 + titleSize * 0.72)
+    ctx.textAlign = 'center'
+    ctx.font = font(Math.min(i === 6 ? 46 : 34, S.w * 0.073))
+    ctx.fillText(scene.title, cx, S.y + Math.max(31, S.h * 0.1))
+    ctx.font = font(Math.max(13, Math.min(17, S.w * 0.037)), { style: 'italic' })
+    const lines = wrapText(ctx, scene.caption, S.w - 42)
+    const captionY = Math.min(S.y + S.h - 84, cy + 185 * scale + 28)
+    lines.forEach((line, k) => ctx.fillText(line, cx, captionY + k * 22))
+    const timelineY = S.y + S.h - 52
+    drawGuideLine(ctx, cx - S.w * 0.28, timelineY, cx + S.w * 0.28, timelineY, { alpha: 0.35 })
+    drop(ctx, cx - S.w * 0.28 + S.w * 0.56 * clamp(t / INTRO_DURATION), timelineY, 3, UI.pink)
     ctx.restore()
-
-    // Dica discreta.
-    drawHint(ctx, L, isTouchUI(context) ? 'toque para pular' : 'clique ou Enter para pular', seg(t, 1.0, 2.0))
-
-    if (leaving >= 0) fadeScreen(ctx, w, h, ((t - leaving) / FADE_OUT) * 0.5, UI.paper)
+    // Paper dissolves also work with art rigs that set their own alpha.
+    const fade = Math.max(1 - smooth(local / 0.35), smooth((t - scene.end + 0.3) / 0.3))
+    fadeScreen(ctx, w, h, fade, UI.paper)
+    drawButton(ctx, soundButton(context), context.audio?.context?.state === 'running' && !context.audio?.muted ? 'Som ativo' : 'Ativar som', { fontSize: 14 })
+    drawButton(ctx, { ...soundButton(context), x: cx + 5 }, 'Pular · Enter', { fontSize: 14 })
   },
-
-  exit() {},
+  exit(context) {
+    context.audio?.stopIntro?.()
+  },
 }

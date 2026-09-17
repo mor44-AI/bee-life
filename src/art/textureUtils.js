@@ -1,12 +1,12 @@
 // Utilitários procedurais compartilhados por bee.js, hive.js, environment.js
-// e creatures.js — implementam as técnicas descritas em
+// e creatures.js - implementam as técnicas descritas em
 // src/data/styleGuide.js (proceduralTexture.hatching / .stipple / .paperGrain)
 // e as convenções de linework (traço de mão, cor de contorno quente).
 //
 // Regra de design do projeto: funções puras. Recebem ctx + parâmetros,
 // nunca leem estado global, nunca guardam estado entre chamadas (exceto o
 // PRNG determinístico local a cada chamada, que é sempre recriado a partir
-// de uma seed explícita — não há Math.random() em lugar nenhum deste
+// de uma seed explícita - não há Math.random() em lugar nenhum deste
 // arquivo, para que a textura de uma entidade não "pisque" entre frames).
 
 import { styleGuide } from '../data/styleGuide.js';
@@ -84,7 +84,7 @@ function formatColor(r, g, b, a) {
 /**
  * Clareia (amount > 0) ou escurece (amount < 0) uma cor, amount em [-1, 1].
  * Aceita hex, rgb() ou rgba(); devolve 'rgb(...)' (ou 'rgba(...)' se a entrada
- * tinha alfa < 1) — o resultado pode ser re-alimentado aqui/em mixColors/withAlpha.
+ * tinha alfa < 1) - o resultado pode ser re-alimentado aqui/em mixColors/withAlpha.
  */
 export function shade(color, amount) {
   const { r, g, b, a } = parseColor(color);
@@ -124,7 +124,7 @@ export function withAlpha(color, alpha = 1) {
 // ---------------------------------------------------------------------------
 
 /**
- * Gera pontos ao redor de uma elipse com jitter opcional — usado tanto para
+ * Gera pontos ao redor de uma elipse com jitter opcional - usado tanto para
  * silhuetas "orgânicas" (blobs de corpo, jitter baixo, muitos lados) quanto
  * para células de favo hexagonais (sides=6, jitter baixo).
  */
@@ -142,7 +142,7 @@ export function polygonPoints(cx, cy, rx, ry, sides, opts = {}) {
 
 /**
  * Traça (moveTo/lineTo ou curva suave via pontos médios) um caminho a partir
- * de uma lista de pontos, no ctx.path corrente — não faz fill/stroke, para
+ * de uma lista de pontos, no ctx.path corrente - não faz fill/stroke, para
  * o caller poder aplicar clip/fill/stroke como quiser.
  */
 export function tracePath(ctx, points, opts = {}) {
@@ -159,7 +159,7 @@ export function tracePath(ctx, points, opts = {}) {
     if (closed) ctx.closePath();
     return;
   }
-  // Curva suave passando pelos pontos médios entre vértices consecutivos —
+  // Curva suave passando pelos pontos médios entre vértices consecutivos -
   // evita curvas bezier perfeitamente simétricas (cornerStyle do styleGuide).
   const start = closed
     ? { x: (points[n - 1].x + points[0].x) / 2, y: (points[n - 1].y + points[0].y) / 2 }
@@ -217,7 +217,7 @@ export function strokeHandDrawn(ctx, points, opts = {}) {
 /**
  * Hachura: dezenas de linhas curvas finas e paralelas de baixa opacidade.
  * O caller deve ter definido um clip (ctx.save(); path; ctx.clip();) para
- * a forma antes de chamar — a função só preenche o bounding box com a
+ * a forma antes de chamar - a função só preenche o bounding box com a
  * família de linhas, cortadas naturalmente pela silhueta pelo clip ativo.
  */
 export function drawHatching(ctx, bounds, opts = {}) {

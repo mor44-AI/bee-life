@@ -3,15 +3,15 @@
 //     sequence: array de inputs esperados, em ordem, comparados por igualdade estrita
 //       (ex. ['up', 'up', 'down', 'A']).
 //     timeLimit: segundos permitidos entre o primeiro .feed() e a conclusão da
-//       sequência (relógio de parede via performance.now/Date.now — este módulo não
+//       sequência (relógio de parede via performance.now/Date.now - este módulo não
 //       tem .update(dt); a contagem de tempo é independente do loop do jogo).
-//     clock: 'wall' (padrão, comportamento antigo: performance.now) ou 'game' — usa o
+//     clock: 'wall' (padrão, comportamento antigo: performance.now) ou 'game' - usa o
 //       tempo do jogo acumulado por combo.update(dt) (pausa/câmera lenta respeitadas).
 //       No modo 'game', update(dt) também marca .failed quando o tempo estoura
 //       mesmo sem nova entrada.
 //   combo.update(dt) -> void  (só tem efeito com clock: 'game')
 //   combo.index -> number (quantas entradas já acertou)
-//   combo.progress -> number 0–1 (index / sequence.length)
+//   combo.progress -> number 0-1 (index / sequence.length)
 //   combo.timeElapsed -> number (s desde o primeiro feed; 0 antes dele)
 //   combo.timeRemaining -> number (s restantes; Infinity sem timeLimit)
 //   combo.feed(input) -> void

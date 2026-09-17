@@ -3,19 +3,19 @@
 // Gênero: triagem espacial sob pressão. Um disco de favo de cria com várias
 // larvas cuja fome sobe em velocidades diferentes (legível pelo comportamento
 // da larva: contorção, tom, poça de alimento secando). A nutriz voa até uma
-// célula; a larva "abre" numa TimingWindow orgânica — ação no centro alimenta
+// célula; a larva "abre" numa TimingWindow orgânica - ação no centro alimenta
 // bem, na borda alimenta parcialmente, fora dela desperdiça a porção. O estoque
 // de alimento larval é limitado: reabastecer exige pairar parada junto aos
 // potes de pólen/néctar, enquanto as outras fomes sobem.
 //
-// Controles (context.controls — celular e PC):
+// Controles (context.controls - celular e PC):
 //   mover: arrastar o dedo / segurar o mouse (a abelha segue) ou WASD/setas;
 //   tocar/clicar numa célula (ou nos potes) leva a abelha até lá;
 //   Ação (botão, Espaço/Enter; clique na célula acoplada no PC) alimenta;
 //   Especial (botão, E/Shift) = "Chamado das nutrizes": por ~6s outras nutrizes
 //   chegam, todas as fomes caem bastante e ficam congeladas.
 //
-// Dificuldade: data.difficulty (0–1) é a fonte da verdade entre turnos;
+// Dificuldade: data.difficulty (0-1) é a fonte da verdade entre turnos;
 // dentro do turno a fome acelera por inShiftRamp.
 
 import { create as createMovement } from '../../engine/MovementController.js'
@@ -44,7 +44,7 @@ import {
   INK_LINE,
 } from '../../art/textureUtils.js'
 import { styleGuide } from '../../data/styleGuide.js'
-import { inShiftRamp } from '../../data/config.js'
+import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
 import { getLayout } from '../../ui/layout.js'
 
 const P = styleGuide.palettes.naturalist
@@ -57,18 +57,18 @@ const damp = (rate, dt) => 1 - Math.exp(-rate * dt)
 const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by)
 
 // ---------------------------------------------------------------------------
-// Dificuldade (d = data.difficulty, 0–1)
+// Dificuldade (d = data.difficulty, 0-1)
 // ---------------------------------------------------------------------------
 
 const SPECIAL = { chargeTime: 22, duration: 6, drop: 0.55, perfectBonus: 0.06, goodBonus: 0.025 }
 
-function buildDifficulty(difficulty = 0.1) {
-  const d = clamp(Number.isFinite(difficulty) ? difficulty : 0.1, 0, 1)
+function buildDifficulty(difficulty = config.difficulty.training) {
+  const d = clamp(Number.isFinite(difficulty) ? difficulty : config.difficulty.training, 0, 1)
   const L = (a, b) => a + (b - a) * d
   const startLarvae = Math.round(L(2.8, 5))
   return {
     d,
-    duration: 60,
+    duration: config.shiftDuration,
     startLarvae,
     totalLarvae: Math.max(startLarvae, Math.round(L(3.6, 7.7))),
     maxStock: Math.round(L(6.3, 4)),
@@ -102,7 +102,7 @@ function computeLayout(lay, seed, slotCount) {
   let comb
   let pot
   if (portrait) {
-    // favo em cima (mais alto que largo), potes embaixo à esquerda — longe dos
+    // favo em cima (mais alto que largo), potes embaixo à esquerda - longe dos
     // botões (canto inferior direito) e alcançáveis arrastando com o polegar.
     const stripH = zoneR * 2 + 22
     const areaH = pf.h - stripH
@@ -870,7 +870,7 @@ function handleAction() {
   if (S.stock <= 0) {
     S.emptyFlash = 1
     S.shake = Math.max(S.shake, 3)
-    addFloater(bee.x, bee.y - 30 * S.layout.beeScale, 'sem alimento — potes', P.caterpillarCream)
+    addFloater(bee.x, bee.y - 30 * S.layout.beeScale, 'sem alimento - potes', P.caterpillarCream)
     dock.lockTimer = 0.35
     return
   }
@@ -915,7 +915,7 @@ function handleAction() {
 
 function computeScore(st) {
   // Calibrado por simulação headless (bots de habilidade variada):
-  // jogador mediano ≈ 60–75 em dificuldade 0.1 e ≈ 45–55 em 0.7.
+  // jogador mediano ≈ 60-75 em dificuldade 0.1 e ≈ 45-55 em 0.7.
   const feeds = st.perfect + st.good
   const attempts = feeds + st.miss
   // cuidado: fome média das larvas ao longo do turno (6 = impecável, 42+ = negligência)
@@ -975,7 +975,7 @@ export default {
   id: 'feedLarvae',
 
   enter(context, data = {}) {
-    const D = buildDifficulty(data?.difficulty ?? 0.1)
+    const D = buildDifficulty(data?.difficulty ?? difficultyFor('feedLarvae', data?.shiftIndex ?? 0))
     const larvae = []
     for (let i = 0; i < D.totalLarvae; i++) larvae.push(makeLarva(i, D, i < D.startLarvae))
     const hatchCount = D.totalLarvae - D.startLarvae
@@ -1008,7 +1008,7 @@ export default {
       inputMag: 0,
       facing: 1,
       dock: null,
-      auto: null, // { kind: 'larva', larva } | { kind: 'pots' } — piloto do toque numa célula
+      auto: null, // { kind: 'larva', larva } | { kind: 'pots' } - piloto do toque numa célula
       beeJolt: 0,
       emptyFlash: 0,
       wasteFlash: 0,

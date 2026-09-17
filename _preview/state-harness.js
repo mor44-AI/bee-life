@@ -1,4 +1,4 @@
-// Harness de preview de estados — roda UM estado (ou o fluxo de UI) isolado,
+// Harness de preview de estados - roda UM estado (ou o fluxo de UI) isolado,
 // fora do main.js, com um `context` que implementa o CONTRATO DE CONTEXTO abaixo.
 // Uso: /_preview/state.html?state=cleaning   (tarefas: cleaning|feedLarvae|feedQueen|guard)
 //      /_preview/state.html?state=menu       (UI: intro|menu|hub|birth|promotion|end)
@@ -10,14 +10,14 @@
 // CONTRATO DE CONTEXTO (a Onda 3 implementa a versão real em src/main.js):
 //   context.renderer   Renderer   (.width/.height lógicos, .getContext())
 //   context.input      InputManager  (entrada crua; tarefas devem preferir context.controls)
-//   context.controls   Controls (src/ui/Controls.js) — atualizado pelo loop ANTES de
+//   context.controls   Controls (src/ui/Controls.js) - atualizado pelo loop ANTES de
 //                      machine.update (controls.update(dt, context.layout)). A tarefa lê
 //                      move / actionPressed / actionDown / specialPressed / directionPressed /
 //                      pointerTap / isTouch; configura no enter
 //                      (context.controls.configure({ showDirections, meter, ... })) e desenha
 //                      no fim do render (context.controls.render(ctx, context.layout)).
 //                      goTo() chama controls.reset() antes de trocar de estado.
-//   context.layout     getLayout(width, height) de src/ui/layout.js — recalculado quando o
+//   context.layout     getLayout(width, height) de src/ui/layout.js - recalculado quando o
 //                      tamanho muda (resize/rotação). Use layout.playfield para o mundo,
 //                      layout.hudBar para o HUD, e não ponha nada importante sob os botões
 //                      (controls.getButtons()).
@@ -33,7 +33,7 @@
 //   context.completeBirth()     -> fim da animação de nascimento (vai para 'hub', rank 'cleaning')
 //   context.startShift()        -> hub inicia turno da tarefa do rank atual
 //   context.finishShift({ score, summary })
-//        -> tarefa encerra o turno. score 0–100 (50 = neutro), summary = frase curta em PT.
+//        -> tarefa encerra o turno. score 0-100 (50 = neutro), summary = frase curta em PT.
 //           Registra pontuação, aplica ColonyState, avança config.days.daysPerShift dias
 //           (time.advanceDays, com colony.tickDecay(1) a cada noite) e decide o próximo
 //           estado: 'promotion' (data: { from, to }), 'end' (dominou a defesa), ou 'hub'.
@@ -48,8 +48,8 @@
 //                  + 'controls' (só harness: demonstração)
 // enter(context, data) de tarefa recebe data = { shiftIndex, difficulty }
 //   shiftIndex: 0 = primeiro turno nessa tarefa.
-//   difficulty: 0–1 = difficultyFor(taskId, shiftIndex, pontuaçõesDessaTarefa) de
-//               src/data/config.js (≈0.1 no primeiro turno = treino; ajuda invisível se
+//   difficulty: 0-1 = difficultyFor(taskId, shiftIndex, pontuaçõesDessaTarefa) de
+//               src/data/config.js (0.57 no primeiro turno; ajuda invisível se
 //               os 2 últimos turnos foram < 40). É a FONTE DA VERDADE da escalada entre
 //               turnos; dentro do turno use inShiftRamp(t, duração).
 
@@ -96,7 +96,7 @@ async function loadState(name) {
   try {
     const mod = await import(MODULES[name])
     const state = mod.default ?? Object.values(mod)[0]
-    // Estados devem ser objetos { enter, update, render, exit } — stubs antigos (classes) são ignorados.
+    // Estados devem ser objetos { enter, update, render, exit } - stubs antigos (classes) são ignorados.
     return state && typeof state === 'object' ? state : null
   } catch (err) {
     console.warn(`[harness] não carregou "${name}":`, err)
@@ -129,7 +129,7 @@ function resultState(taskId, nextData) {
       ctx.fillStyle = '#2B2418'
       ctx.textAlign = 'center'
       ctx.font = '600 24px Georgia, serif'
-      ctx.fillText(`Turno encerrado — pontuação ${Math.round(result?.score ?? 0)}`, c.width / 2, c.height / 2 - 20)
+      ctx.fillText(`Turno encerrado - pontuação ${Math.round(result?.score ?? 0)}`, c.width / 2, c.height / 2 - 20)
       ctx.font = '16px Georgia, serif'
       ctx.fillText(result?.summary ?? '', c.width / 2, c.height / 2 + 16)
       ctx.font = '14px Georgia, serif'
@@ -325,6 +325,8 @@ async function main() {
   const registered = new Set()
   context.hasSave = () => false
   context.newGame = () => {
+    for (const key of Object.keys(shiftCounts)) delete shiftCounts[key]
+    for (const key of Object.keys(scoresByTask)) delete scoresByTask[key]
     context.colony = new ColonyState()
     context.time = new TimeSystem()
     context.tasks = new TaskSystem()
@@ -362,7 +364,7 @@ async function main() {
     context.colony.applyTaskResult(rank, score)
     context.time.advanceDays(config.days.daysPerShift, () => context.colony.tickDecay(1))
 
-    if (rank === 'guard' && context.tasks.getAccumulatedScore() >= config.promotionThresholds.guard) {
+    if (rank === 'guard' && context.tasks.isTaskComplete()) {
       context.goTo('end')
     } else if (context.tasks.checkPromotion()) {
       context.goTo('promotion', { from: rank, to: context.tasks.currentRank })

@@ -1,14 +1,14 @@
 // API pública:
 //   create({ bounds, obstacles = [], speed = 100 }) -> controller (também default export)
-//     bounds: { x, y, width, height } | null — retângulo que limita a área navegável
+//     bounds: { x, y, width, height } | null - retângulo que limita a área navegável
 //       (posição é clampada às bordas). Se null, movimento é livre/ilimitado.
-//     obstacles: lista de formas simples a colidir — círculo { x, y, radius } ou
+//     obstacles: lista de formas simples a colidir - círculo { x, y, radius } ou
 //       retângulo { x, y, width, height }. Ao colidir, o movimento daquele frame é
 //       bloqueado (posição não avança) e .collided vira true.
 //     speed: velocidade base (unidades/segundo).
 //   controller.update(dt, inputVector = { x, y }) -> void
 //     inputVector é um vetor de direção (não precisa estar normalizado; se sua
-//     magnitude for > 1, é normalizado internamente — magnitudes <= 1 são respeitadas
+//     magnitude for > 1, é normalizado internamente - magnitudes <= 1 são respeitadas
 //     como estão, útil para input analógico).
 //   controller.position -> { x, y } (atualizado por update)
 //   controller.collided -> boolean (true apenas no frame em que uma colisão bloqueou o movimento)

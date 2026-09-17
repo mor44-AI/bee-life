@@ -4,7 +4,7 @@
 // para conferência visual contra src/data/styleGuide.js.
 //
 // Servir via HTTP a partir da raiz do projeto (ex.: `npx vite` ou qualquer
-// servidor estático) — imports ES module não funcionam em file:// no Chrome.
+// servidor estático) - imports ES module não funcionam em file:// no Chrome.
 
 import { styleGuide } from '../src/data/styleGuide.js';
 import {
@@ -33,7 +33,7 @@ import {
 const naturalist = styleGuide.palettes.naturalist;
 
 // Tenta carregar engine/tween.js (escrito em paralelo por outro agente) só
-// para demonstrar o contrato de interpolação entre poses nomeadas — se
+// para demonstrar o contrato de interpolação entre poses nomeadas - se
 // ainda não existir/estiver incompleto, o painel correspondente mostra o
 // erro sem derrubar o resto da folha de contato.
 let tweenApi = null;
@@ -58,17 +58,17 @@ function panel({ id, title, width = 220, height = 180, draw }) {
 }
 
 // ---------------------------------------------------------------------------
-// Abelha — poses nomeadas
+// Abelha - poses nomeadas
 // ---------------------------------------------------------------------------
-section('Abelha — poses nomeadas (bee.js)');
+section('Abelha - poses nomeadas (bee.js)');
 panel({
   id: 'bee-idle',
-  title: 'idle — respiração sutil',
+  title: 'idle - respiração sutil',
   draw: (ctx, t) => drawBeeBody(ctx, createIdlePose(110, 110, { t, scale: 2.6 })),
 });
 panel({
   id: 'bee-flight',
-  title: 'voo — batida de asa',
+  title: 'voo - batida de asa',
   draw: (ctx, t) => drawBeeBody(ctx, createFlightPose(110, 110, t, { scale: 2.6 })),
 });
 panel({
@@ -83,7 +83,7 @@ panel({
 });
 panel({
   id: 'bee-regurgitate',
-  title: 'regurgitação — alimentando',
+  title: 'regurgitação - alimentando',
   draw: (ctx, t) => drawBeeBody(ctx, createRegurgitatePose(110, 110, t, { scale: 2.6 })),
 });
 panel({
@@ -102,9 +102,9 @@ panel({
 });
 
 // ---------------------------------------------------------------------------
-// Abelha — variantes de idade (colorVariant)
+// Abelha - variantes de idade (colorVariant)
 // ---------------------------------------------------------------------------
-section('Abelha — colorVariant por idade (jovem mais clara, velha mais escura)');
+section('Abelha - colorVariant por idade (jovem mais clara, velha mais escura)');
 ['young', 'adult', 'old'].forEach((variant) => {
   panel({
     id: `bee-variant-${variant}`,
@@ -119,7 +119,7 @@ section('Abelha — colorVariant por idade (jovem mais clara, velha mais escura)
 section('Colmeia (hive.js)');
 panel({
   id: 'hive-interior',
-  title: 'drawHiveInterior — favo orgânico + câmara real',
+  title: 'drawHiveInterior - favo orgânico + câmara real',
   width: 480,
   height: 340,
   draw: (ctx) => {
@@ -147,7 +147,7 @@ panel({
 });
 panel({
   id: 'hive-cell-states',
-  title: 'drawCell — todos os estados (empty, egg, larva, capped, honey, pollen)',
+  title: 'drawCell - todos os estados (empty, egg, larva, capped, honey, pollen)',
   width: 280,
   height: 100,
   draw: (ctx) => {
@@ -159,7 +159,7 @@ panel({
 });
 panel({
   id: 'hive-comb-only',
-  title: 'drawComb isolado — repare no jitter orgânico (não é grid perfeito)',
+  title: 'drawComb isolado - repare no jitter orgânico (não é grid perfeito)',
   width: 280,
   height: 200,
   draw: (ctx) => {
@@ -182,11 +182,11 @@ panel({
 // ---------------------------------------------------------------------------
 // Ambiente
 // ---------------------------------------------------------------------------
-section('Ambiente (environment.js) — mesma paleta, dia → noite sem troca abrupta');
+section('Ambiente (environment.js) - mesma paleta, dia → noite sem troca abrupta');
 [['day', 'dia'], ['morning', 'manhã'], ['dusk', 'entardecer'], ['night', 'noite']].forEach(([tod, label]) => {
   panel({
     id: `env-${tod}`,
-    title: `drawBackground + drawLightOverlay — ${label}`,
+    title: `drawBackground + drawLightOverlay - ${label}`,
     width: 240,
     height: 170,
     draw: (ctx) => {
@@ -199,25 +199,25 @@ section('Ambiente (environment.js) — mesma paleta, dia → noite sem troca abr
 // ---------------------------------------------------------------------------
 // Criaturas
 // ---------------------------------------------------------------------------
-section('Criaturas (creatures.js) — silhuetas devem ser reconhecíveis à distância');
+section('Criaturas (creatures.js) - silhuetas devem ser reconhecíveis à distância');
 panel({
   id: 'creature-ant',
-  title: 'drawAnt — formiga invasora (rígida, sem asas, cintura marcada)',
+  title: 'drawAnt - formiga invasora (rígida, sem asas, cintura marcada)',
   draw: (ctx, t) => drawAnt(ctx, createAntPose(110, 110, t, { scale: 3.4 })),
 });
 panel({
   id: 'creature-fly',
-  title: 'drawPhoridFly — mosca parasita (corcunda, 1 par de asas)',
+  title: 'drawPhoridFly - mosca parasita (corcunda, 1 par de asas)',
   draw: (ctx, t) => drawPhoridFly(ctx, createPhoridFlyPose(110, 110, t, { scale: 5 })),
 });
 panel({
   id: 'creature-larva',
-  title: 'drawWaxMothLarva — larva da traça-de-cera (mole, sem pernas)',
+  title: 'drawWaxMothLarva - larva da traça-de-cera (mole, sem pernas)',
   draw: (ctx, t) => drawWaxMothLarva(ctx, createWaxMothLarvaPose(110, 110, t, { scale: 3 })),
 });
 panel({
   id: 'creature-comparison',
-  title: 'lado a lado — leitura rápida de silhueta (e a abelha, para comparar)',
+  title: 'lado a lado - leitura rápida de silhueta (e a abelha, para comparar)',
   width: 360,
   height: 150,
   draw: (ctx, t) => {
@@ -292,12 +292,12 @@ function frame(now) {
       p.errorBox.textContent = `Erro: ${err.message}`;
       ctx.fillStyle = '#E8447A';
       ctx.font = '11px monospace';
-      ctx.fillText('ERRO — ver console', 8, canvas.height - 8);
+      ctx.fillText('ERRO - ver console', 8, canvas.height - 8);
     }
   });
   statusEl.textContent = totalErrors === 0
-    ? `${allPanels.length} painéis renderizando sem erros — tween.js: ${tweenApi ? 'carregado' : 'indisponível (ok, só afeta o painel de interpolação)'}`
-    : `${totalErrors} painel(is) com erro — ver caixas vermelhas abaixo e o console`;
+    ? `${allPanels.length} painéis renderizando sem erros - tween.js: ${tweenApi ? 'carregado' : 'indisponível (ok, só afeta o painel de interpolação)'}`
+    : `${totalErrors} painel(is) com erro - ver caixas vermelhas abaixo e o console`;
   statusEl.classList.toggle('has-errors', totalErrors > 0);
   requestAnimationFrame(frame);
 }

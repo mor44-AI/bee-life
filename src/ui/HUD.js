@@ -1,4 +1,4 @@
-// HUD — painel de "caderno de campo" com os 6 indicadores da colônia (mostradores
+// HUD - painel de "caderno de campo" com os 6 indicadores da colônia (mostradores
 // técnicos de IndicatorBar), o dia atual/maxDays (mostrador circular de dias)
 // e o rank atual da operária. Também exporta pequenos utilitários de UI
 // compartilhados pelos estados de interface (src/states/*State.js).
@@ -14,16 +14,16 @@
 //     Largura < 760: cabeçalho (dia + função + progresso) e mostradores em grade 3×2.
 //     Largura ≥ 760: tudo numa faixa só.
 //     Lê context.colony / context.time / context.tasks / context.elapsed.
-//     Mantém um IndicatorBar por indicador (por context, via WeakMap) — valores
+//     Mantém um IndicatorBar por indicador (por context, via WeakMap) - valores
 //     animam suavemente sozinhos quando ColonyState muda.
 //   getHUDHeight(width, uiScale = 1) -> number   (altura que drawHUD vai ocupar)
 //   RANK_NAMES, rankName(id), COLONY_INDICATORS [{ key, label, short }]
 //   promotionProgress(context) -> { rank, next, acc, threshold, frac, turnsLeft, expectedTurns }
 //     Progresso até a próxima função (config.promotionThresholds / turnsPerTask).
-//     turnsLeft é estimativa (pontuação média por turno), mínimo 1.
+//     turnsLeft é a quantidade exata de turnos restantes.
 //   Utilitários de tela (mobile first):
 //     screenLayout(context) -> layout  (context.layout, ou getLayout(w, h) se ausente)
-//     uiScaleOf(layout) -> número 0.9–1.3 para fontes/ícones
+//     uiScaleOf(layout) -> número 0.9-1.3 para fontes/ícones
 //     safeRect(layout) -> { x, y, w, h }  área sem notch/barra
 //     isTouchUI(context) -> boolean  (context.controls.isTouch / input.lastInputType)
 //     anyKeyPressed(input, codes) -> boolean  (borda via input.wasKeyPressed)
@@ -32,7 +32,7 @@
 //   Utilitários de desenho: createLayerCache(paint), createPaperBackdrop(opts),
 //     wrapText(ctx, text, maxWidth), drawPaperCard(ctx, x, y, w, h, opts),
 //     drawButton(ctx, rect, label, opts), pointInRect(p, rect), fadeScreen(ctx, w, h, alpha)
-//   createKeyWatcher(input, codes) — LEGADO (prefira anyKeyPressed); mantido por compat.
+//   createKeyWatcher(input, codes) - LEGADO (prefira anyKeyPressed); mantido por compat.
 
 import IndicatorBar, { UI, font, drawDial, drawScaleArc, drawDottedCircle, setLetterSpacing } from './IndicatorBar.js'
 import { getLayout } from './layout.js'
@@ -191,14 +191,14 @@ export function promotionProgress(context) {
   const threshold = Math.max(1, T[rank] ?? T.default ?? 150)
   const TP = config.turnsPerTask || {}
   const expectedTurns = Math.max(1, TP[rank] ?? TP.default ?? 3)
-  const frac = clampN(acc / threshold, 0, 1)
-  const perTurn = threshold / expectedTurns
-  const turnsLeft = Math.max(1, Math.ceil((threshold - acc) / perTurn - 1e-6))
+  const completed = context.tasks?.getCompletedShifts?.() ?? 0
+  const frac = clampN(completed / expectedTurns, 0, 1)
+  const turnsLeft = Math.max(0, expectedTurns - completed)
   return { rank, next, acc, threshold, frac, turnsLeft, expectedTurns }
 }
 
 /**
- * LEGADO — detecção de borda por polling de isKeyDown. Prefira anyKeyPressed().
+ * LEGADO - detecção de borda por polling de isKeyDown. Prefira anyKeyPressed().
  * watcher.prime() no enter (ignora teclas já seguradas do estado anterior);
  * watcher.poll() 1x por update -> Set de códigos recém-pressionados.
  */
@@ -543,7 +543,7 @@ function drawProgressRule(ctx, x, y, w, progress, u) {
 
 function progressCaption(p) {
   const n = p.turnsLeft
-  const turns = `≈ ${n} ${n === 1 ? 'turno' : 'turnos'}`
+  const turns = `${n} ${n === 1 ? 'turno' : 'turnos'}`
   return p.next ? `${turns} até ${rankName(p.next)}` : `${turns} até o fim do Marco 1`
 }
 

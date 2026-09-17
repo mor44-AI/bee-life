@@ -1,12 +1,12 @@
-// IndicatorBar — indicador individual no estilo "instrumento técnico"
+// IndicatorBar - indicador individual no estilo "instrumento técnico"
 // (styleGuide.technicalOverlayMotif): mostrador fino de 270° com marcas de
 // escala tipo transferidor, ponteiro, círculo pontilhado concêntrico e uma
-// pequena faixa de "zona crítica" (0–25). Nada de barra de progresso genérica.
+// pequena faixa de "zona crítica" (0-25). Nada de barra de progresso genérica.
 //
 // API pública:
 //   default class IndicatorBar
 //     new IndicatorBar({ label, shortLabel, value = 0, radius = 24, duration = 1.1 })
-//     .setValue(v, { immediate = false })  -> anima (tween easeInOutCubic) até v (0–100)
+//     .setValue(v, { immediate = false })  -> anima (tween easeInOutCubic) até v (0-100)
 //     .update(dt)                           -> avança a animação
 //     .value  (valor exibido, animado)  /  .target (valor-alvo)
 //     .draw(ctx, x, y, { radius, time, reveal, labelColor, labelSize, labelMaxWidth, valueSize })
@@ -37,7 +37,7 @@ export const UI = {
   gold: N.caterpillarGold,
   sunGold: N.sunGold,
   sunHalo: N.sunHalo,
-  pink: N.accentPink, // um único acento por cena — os estados decidem onde
+  pink: N.accentPink, // um único acento por cena - os estados decidem onde
   critical: '#A1482F', // terracota apagada: visível sem "gritar" (não é o acento rosa)
   serif: 'Georgia, "Times New Roman", serif',
 }
@@ -168,7 +168,7 @@ export function drawDial(ctx, x, y, radius, value, opts = {}) {
     drawDottedCircle(ctx, x, y, r + 5, { progress: p, alpha: 0.28 })
   }
 
-  // Escala principal: 0–100, marca a cada 5, maior a cada 25.
+  // Escala principal: 0-100, marca a cada 5, maior a cada 25.
   const tickScale = r / 24
   drawScaleArc(ctx, x, y, r, A0, A1, {
     progress: p,
@@ -180,7 +180,7 @@ export function drawDial(ctx, x, y, radius, value, opts = {}) {
     lineWidth: 0.9,
   })
 
-  // Zona crítica (0–25): arco duplo fino por fora da escala.
+  // Zona crítica (0-25): arco duplo fino por fora da escala.
   if (p > 0) {
     const zoneEnd = valueAngle(CRITICAL_THRESHOLD)
     ctx.save()

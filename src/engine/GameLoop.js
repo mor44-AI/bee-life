@@ -2,7 +2,7 @@
 //   create({ update(dt), render(), maxDt = 0.1 }) -> loop (também default export)
 //     update(dt): chamado a cada frame com o delta time em segundos.
 //     render(): chamado a cada frame após update, sem argumentos.
-//     maxDt: teto para dt (segundos) — evita saltos grandes de simulação quando a
+//     maxDt: teto para dt (segundos) - evita saltos grandes de simulação quando a
 //       aba fica em segundo plano ou o frame demora demais.
 //   loop.start() -> void
 //     Inicia (ou reinicia) o requestAnimationFrame. Idempotente se já rodando.

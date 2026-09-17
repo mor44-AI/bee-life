@@ -1,14 +1,14 @@
-// Tarefa: Defesa da entrada — a operária como guardiã.
+// Tarefa: Defesa da entrada - a operária como guardiã.
 //
 // Gênero: reconhecimento visual + reflexo de ataque.
 // A guardiã fica presa à zona da entrada (anel técnico em volta do gargalo de
 // barro/geoprópolis). Chegam, misturados: formigas em fila pelo tronco/galho
 // (PatternSpawner 'file'), moscas-forídeas nervosas (voo em arrancadas e
-// pausas, às vezes "pegando carona" atrás de uma forrageira — comportamento
+// pausas, às vezes "pegando carona" atrás de uma forrageira - comportamento
 // real dos forídeos) e forrageiras legítimas voltando com bolotas de pólen,
 // voo reto/calmo e um leve halo dourado de cheiro da colônia.
 //
-// Controles (context.controls — o mesmo código serve celular e PC):
+// Controles (context.controls - o mesmo código serve celular e PC):
 //   Celular (retrato é o design principal): arrastar o dedo move a guardiã dentro
 //   do anel; TOCAR num intruso investe na direção dele (a mira gruda no intruso
 //   mais próximo do toque e acompanha-o durante o preparo); botão Ação investe no
@@ -17,7 +17,7 @@
 //   Espaço investe na direção das teclas/do olhar. Especial: botão, E ou Shift.
 //   Sem texto de tutorial.
 //
-// Dificuldade: data.difficulty (0–1) é a fonte da verdade (tuningFor); dentro do
+// Dificuldade: data.difficulty (0-1) é a fonte da verdade (tuningFor); dentro do
 // turno as ondas apertam com inShiftRamp. ~0.1 = treino (poucos intrusos lentos,
 // sem ameaças duplas, moscas sem esquiva, recarga curta).
 //
@@ -31,7 +31,7 @@
 import createMovement from '../../engine/MovementController.js'
 import createPatternSpawner from '../../engine/PatternSpawner.js'
 import { create as createMeter } from '../../engine/SpecialMeter.js'
-import { inShiftRamp } from '../../data/config.js'
+import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
 import { ease, lerp } from '../../engine/tween.js'
 import { createFlightPose, createCarryingPose, drawBeeBody } from '../../art/bee.js'
 import { createAntPose, drawAnt, createPhoridFlyPose, drawPhoridFly } from '../../art/creatures.js'
@@ -53,11 +53,11 @@ const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
 
 // --- Ritmo do turno ---------------------------------------------------------
-const DURATION = 60
+const DURATION = config.shiftDuration
 const WAVES = 4
-const WAVE_FIRST = 1.5
-const WAVE_STEP = 14.5
-const WAVE_LEN = 11
+const WAVE_FIRST = 1.5 * config.durationScale
+const WAVE_STEP = 14.5 * config.durationScale
+const WAVE_LEN = 11 * config.durationScale
 const OUTRO = 1.8
 
 // --- Investida --------------------------------------------------------------
@@ -91,7 +91,7 @@ const angDiff = (a, b) => {
 let st = null
 
 // ============================================================================
-// Dificuldade: tudo sai de difficulty (0–1) + rampa dentro do turno
+// Dificuldade: tudo sai de difficulty (0-1) + rampa dentro do turno
 // ============================================================================
 
 export function tuningFor(difficulty, ramp) {
@@ -703,7 +703,7 @@ function forEachIntruder(fn) {
 // ============================================================================
 
 function resetState(data) {
-  const difficulty = clamp(Number.isFinite(data?.difficulty) ? data.difficulty : 0.1, 0, 1)
+  const difficulty = clamp(Number.isFinite(data?.difficulty) ? data.difficulty : config.difficulty.training, 0, 1)
   st = {
     L: null, bg: null, entrance: null, ticks: null, sprites: new Map(), dpr: 1, marksLayer: null, buttons: [],
     shift: Math.max(0, data?.shiftIndex ?? 0),
@@ -876,7 +876,7 @@ function updatePlayer(context, dt) {
     mv = { x: m.vx, y: m.vy }
     st.drag = null
   } else if (m && m.targetX != null) {
-    // arrastar move; um toque curto é investida — só segue depois de segurar/arrastar
+    // arrastar move; um toque curto é investida - só segue depois de segurar/arrastar
     if (!st.drag) st.drag = { t: 0, x: m.pointerX, y: m.pointerY, go: false }
     st.drag.t += dt
     if (!st.drag.go && (st.drag.t > 0.2 || Math.hypot(m.pointerX - st.drag.x, m.pointerY - st.drag.y) > 14)) st.drag.go = true
@@ -1406,7 +1406,7 @@ function finish(context) {
   const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`
   let summary = `${pl(repelled, 'intruso repelido', 'intrusos repelidos')}, ${pl(breaches, 'brecha', 'brechas')}, ${pl(friendly, 'companheira atingida', 'companheiras atingidas')}`
   if (byAlarm > 0) summary += ` (${byAlarm} pelo alarme)`
-  if (breaches === 0 && friendly === 0 && repelled > 0) summary += ' — entrada intacta'
+  if (breaches === 0 && friendly === 0 && repelled > 0) summary += ' - entrada intacta'
   context.finishShift({ score, summary })
 }
 

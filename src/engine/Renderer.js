@@ -3,7 +3,7 @@
 //     Localiza o elemento canvas no DOM (aceita seletor string ou o próprio elemento),
 //     pega o contexto 2D, e mantém o canvas redimensionado para
 //     window.innerWidth/innerHeight com correção de devicePixelRatio.
-//     Convenção: após o setup, ctx.setTransform aplica a escala de DPI — todo desenho
+//     Convenção: após o setup, ctx.setTransform aplica a escala de DPI - todo desenho
 //     subsequente usa coordenadas "lógicas" (CSS px, 0..innerWidth / 0..innerHeight),
 //     não pixels físicos do backing store. InputManager.js segue a mesma convenção
 //     para normalizar coordenadas de ponteiro.

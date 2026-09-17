@@ -1,11 +1,11 @@
-// layout — layout responsivo comum a todas as telas/tarefas. Vertical (celular em
+// layout - layout responsivo comum a todas as telas/tarefas. Vertical (celular em
 // pé) é o formato de DESIGN; tela deitada (PC, tablet, celular deitado) centraliza
 // o campo de jogo e manda os botões para as laterais.
 //
 // API pública:
 //   getLayout(width, height, { safe } = {}) -> layout
 //     width/height: tamanho lógico do canvas (renderer.width/height, CSS px).
-//     safe (opcional): { top, right, bottom, left } — se omitido, lido das CSS vars
+//     safe (opcional): { top, right, bottom, left } - se omitido, lido das CSS vars
 //       --safe-top/--safe-right/--safe-bottom/--safe-left (ver installViewportGuards),
 //       com fallback 0 fora do navegador.
 //     layout = {

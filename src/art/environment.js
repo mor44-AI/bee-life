@@ -1,11 +1,11 @@
 // Desenho procedural do cenário/ambiente (fundo de papel, luz, ciclo dia/noite).
 //
 // Ver src/data/styleGuide.js -> lighting.dayNightNote: o ciclo dia/noite NÃO
-// troca de paleta abruptamente — a mesma paleta naturalista migra de "tons
+// troca de paleta abruptamente - a mesma paleta naturalista migra de "tons
 // quentes plenos" (dia) para "saturação reduzida + leve viés azulado"
 // (noite), preservando sempre o "papel" de fundo por baixo.
 //
-// Regra de design: funções puras — drawBackground/drawLightOverlay só leem
+// Regra de design: funções puras - drawBackground/drawLightOverlay só leem
 // os parâmetros recebidos (ctx, timeOfDay, options), nunca Date.now() nem
 // nenhum outro estado global. Quem decide o instante do ciclo (TimeSystem)
 // é responsabilidade de outro módulo; aqui só traduzimos esse instante em
@@ -23,7 +23,7 @@ const NIGHT_TINT = '#2E3B52';
  * Aceita timeOfDay numérico (0 = meia-noite, 0.5 = meio-dia, ciclo de 0..1)
  * ou uma palavra-chave ('day'|'morning'|'dusk'|'evening'|'night'|'dawn').
  * Retorna um fator [0,1] de "quanto de dia" tem na cena (1 = pleno dia,
- * 0 = noite fechada) — usado para interpolar tom/saturação, nunca para
+ * 0 = noite fechada) - usado para interpolar tom/saturação, nunca para
  * trocar de paleta.
  */
 function resolveDayFactor(timeOfDay) {
@@ -62,7 +62,7 @@ export function drawBackground(ctx, timeOfDay, options = {}) {
     noiseOpacity: [0.03, 0.06],
   });
 
-  // Véu translúcido de "esfriamento" — preserva o papel por baixo, só reduz
+  // Véu translúcido de "esfriamento" - preserva o papel por baixo, só reduz
   // saturação/tom conforme a noite avança (nunca uma paleta nova).
   if (dayFactor < 0.97) {
     ctx.save();
@@ -107,7 +107,7 @@ function drawDistantFoliage(ctx, width, height, dayFactor, seed) {
 
 /**
  * Desenha o glow dourado quente de luz de fim de tarde (gradiente radial
- * suave, nunca sombra dura). Escala com dayFactor — à noite o glow
+ * suave, nunca sombra dura). Escala com dayFactor - à noite o glow
  * praticamente desaparece.
  * options: { width, height, cx, cy, radius }
  */

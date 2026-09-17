@@ -1,5 +1,5 @@
-// EndOfMarco1State — enter(context, { reason }):
-//   'completed' -> dominou a defesa da entrada: "Continua em breve — lá fora, o mundo ultravioleta espera"
+// EndOfMarco1State - enter(context, { reason }):
+//   'completed' -> dominou a defesa da entrada: "Continua em breve - lá fora, o mundo ultravioleta espera"
 //   'lifeOver'  -> a vida chegou ao fim antes disso.
 // Resumo: dias vividos, função final e estado final da colônia (mostradores estáticos,
 // grade 3×2 em tela estreita). Vertical primeiro: emblema, título, cartão e botão grande

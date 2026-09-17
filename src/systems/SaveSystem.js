@@ -1,5 +1,5 @@
-// SaveSystem — persistência simples em localStorage, 1 slot fixo (lógica pura
-// de fachada; sem estado de instância — todos os métodos são estáticos).
+// SaveSystem - persistência simples em localStorage, 1 slot fixo (lógica pura
+// de fachada; sem estado de instância - todos os métodos são estáticos).
 //
 // Formato esperado do `state` salvo (definido pelo chamador, não validado
 // estruturalmente aqui): { rank, day, colony, history }
@@ -9,7 +9,7 @@
 //   history: array | object (histórico de pontuações passadas, livre)
 //
 // API pública:
-//   SaveSystem.SAVE_KEY: string — chave fixa usada no localStorage.
+//   SaveSystem.SAVE_KEY: string - chave fixa usada no localStorage.
 //   SaveSystem.save(state: object): boolean
 //     Serializa `state` com JSON.stringify e grava em localStorage sob
 //     SAVE_KEY. Retorna true em sucesso; false se localStorage não estiver
@@ -72,7 +72,7 @@ export default class SaveSystem {
     try {
       storage.removeItem(SAVE_KEY);
     } catch (_err) {
-      // ignora — não há slot para limpar de qualquer forma
+      // ignora - não há slot para limpar de qualquer forma
     }
   }
 }

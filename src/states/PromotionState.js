@@ -1,4 +1,4 @@
-// PromotionState — enter(context, { from, to }). Transição celebratória contida:
+// PromotionState - enter(context, { from, to }). Transição celebratória contida:
 // o diagrama técnico da função antiga se apaga e um novo se redesenha, enquanto
 // um ponteiro (acento rosa único) percorre a escala das 5 funções até a nova.
 // Toque/clique em qualquer lugar ou tecla: primeiro adianta a animação; depois
@@ -32,7 +32,7 @@ const T_READY = 3.6
 
 const ROLE_NOTES = {
   cleaning: 'Limpar e preparar as células de cria para a próxima geração.',
-  feedLarvae: 'Nas Melipona, o alimento larval é depositado na célula antes da postura — e a célula é então selada.',
+  feedLarvae: 'Nas Melipona, o alimento larval é depositado na célula antes da postura - e a célula é então selada.',
   feedQueen: 'Cuidar da rainha, a mãe de toda a colônia.',
   guard: 'Vigiar a entrada do ninho. Sem ferrão, a defesa é feita com mandíbulas, corpo e própolis.',
 }
