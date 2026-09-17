@@ -8,11 +8,30 @@
 // real dos forídeos) e forrageiras legítimas voltando com bolotas de pólen,
 // voo reto/calmo e um leve halo dourado de cheiro da colônia.
 //
-// Controles: mover = WASD/setas ou segurar o ponteiro; ação = Espaço/clique
-// (investida com preparo 0,25s + recarga). Sem texto de tutorial.
+// Controles (context.controls — o mesmo código serve celular e PC):
+//   Celular (retrato é o design principal): arrastar o dedo move a guardiã dentro
+//   do anel; TOCAR num intruso investe na direção dele (a mira gruda no intruso
+//   mais próximo do toque e acompanha-o durante o preparo); botão Ação investe no
+//   intruso mais próximo à frente (assistência de mira) ou na direção do movimento.
+//   PC: WASD/setas ou segurar o mouse movem; clique investe rumo ao ponto;
+//   Espaço investe na direção das teclas/do olhar. Especial: botão, E ou Shift.
+//   Sem texto de tutorial.
+//
+// Dificuldade: data.difficulty (0–1) é a fonte da verdade (tuningFor); dentro do
+// turno as ondas apertam com inShiftRamp. ~0.1 = treino (poucos intrusos lentos,
+// sem ameaças duplas, moscas sem esquiva, recarga curta).
+//
+// Especial "Alarme de feromônio": abelhas sem ferrão liberam feromônio de alarme
+// (voláteis das glândulas mandibulares) que recruta outras defensoras para a
+// entrada. O medidor carrega com cada intruso repelido + carga passiva lenta.
+// Ao ativar: pulso de anéis técnicos sai da entrada e guardiãs recrutadas saem
+// por ~4s repelindo todo intruso na tela (NUNCA forrageiras); intrusos ficam
+// lentos e brechas não contam durante o efeito.
 
 import createMovement from '../../engine/MovementController.js'
 import createPatternSpawner from '../../engine/PatternSpawner.js'
+import { create as createMeter } from '../../engine/SpecialMeter.js'
+import { inShiftRamp } from '../../data/config.js'
 import { ease, lerp } from '../../engine/tween.js'
 import { createFlightPose, createCarryingPose, drawBeeBody } from '../../art/bee.js'
 import { createAntPose, drawAnt, createPhoridFlyPose, drawPhoridFly } from '../../art/creatures.js'
@@ -34,19 +53,22 @@ const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
 
 // --- Ritmo do turno ---------------------------------------------------------
-const DURATION = 70
-const WAVES = 5
-const WAVE_FIRST = 1.2
-const WAVE_STEP = 13.7
-const WAVE_LEN = 11.4
+const DURATION = 60
+const WAVES = 4
+const WAVE_FIRST = 1.5
+const WAVE_STEP = 14.5
+const WAVE_LEN = 11
 const OUTRO = 1.8
 
 // --- Investida --------------------------------------------------------------
-const WINDUP = 0.25
 const LUNGE = 0.12
-const RECOVER_MISS = 0.8
-const RECOVER_HIT = 0.6
-const BUFFER = 0.14
+const BUFFER = 0.18
+
+// --- Alarme de feromônio ------------------------------------------------------
+const ALARM_TIME = 4
+const ALARM_HELPERS = 5
+const ALARM_SLOW = 0.3 // intrusos desorientados pelo feromônio
+const CHARGE_PER_REPEL = 0.05
 
 // --- Cores de barro / geoprópolis e casca (mutadas contra o papel) ----------
 const CLAY_LIGHT = mixColors('#BFA27A', P.paperCreamDark, 0.15)
@@ -69,17 +91,50 @@ const angDiff = (a, b) => {
 let st = null
 
 // ============================================================================
+// Dificuldade: tudo sai de difficulty (0–1) + rampa dentro do turno
+// ============================================================================
+
+export function tuningFor(difficulty, ramp) {
+  const d = clamp(difficulty, 0, 1)
+  const k = clamp(d * (0.68 + 0.2 * ramp) + 0.1 * ramp, 0, 1)
+  const over = (a) => clamp((k - a) / (1 - a), 0, 1)
+  return {
+    k,
+    antSpeed: lerp(28, 56, k),
+    antGap: lerp(1.8, 0.95, k),
+    antsPerCol: Math.round(lerp(2, 5.4, k)),
+    maxCols: k < 0.4 ? 1 : 2,
+    antShare: lerp(0.32, 0.45, k),
+    flySpeed: lerp(90, 178, k),
+    flyHover: lerp(1.4, 0.55, k),
+    flyErratic: lerp(0.45, 1, k),
+    flyDodge: lerp(0, 0.45, over(0.22)),
+    dbl: lerp(0, 0.45, over(0.3)),
+    triple: lerp(0, 0.35, over(0.72)),
+    intruderGap: lerp(4.6, 1.9, k),
+    foragerGap: lerp(3.4, 2.1, k),
+    tail: lerp(0, 0.38, over(0.35)),
+    windup: lerp(0.15, 0.24, k),
+    recoverMiss: lerp(0.4, 0.8, k),
+    recoverHit: lerp(0.26, 0.55, k),
+  }
+}
+
+// ============================================================================
 // Layout + camadas estáticas
 // ============================================================================
 
-function computeLayout(w, h) {
-  const m = Math.min(w, h)
-  const s = clamp(m / 720, 0.62, 1.5)
-  const cx = w / 2
-  const cy = h * 0.53
-  const R = Math.min(m * 0.27, 190 * s)
-  const tw = clamp(w * 0.5, 2.3 * R + 60 * s, w * 0.86)
-  const L = { w, h, s, cx, cy, R, tw }
+function computeLayout(w, h, UL) {
+  const pf = UL?.playfield || { x: 0, y: 0, w, h }
+  const portrait = !UL || UL.orientation === 'portrait'
+  const s = clamp(Math.min(pf.w / 440, pf.h / 600), 0.8, 1.5)
+  // criaturas um pouco maiores no retrato: alvos tocáveis e reconhecíveis em 375×812
+  const cs = s * (portrait ? 1.22 : 1.05)
+  const cx = pf.x + pf.w / 2
+  const cy = pf.y + pf.h * 0.54
+  const R = Math.min(pf.w * 0.33, pf.h * 0.28, 200 * s)
+  const tw = Math.min(clamp(pf.w * 0.5, 2.3 * R + 60 * s, pf.w * 0.86), w * 0.92)
+  const L = { w, h, s, cs, cx, cy, R, tw, pf, portrait, orient: UL?.orientation || 'portrait', key: `${w}x${h}:${pf.x},${pf.y},${pf.w},${pf.h}` }
   L.trunkX = (side, y) => {
     const flare = Math.pow(clamp(y / h, 0, 1), 3) * 34 * s
     const wob = Math.sin(y * 0.0042 + (side < 0 ? 0.7 : 2.1)) * 12 * s + Math.sin(y * 0.013 + side) * 4 * s
@@ -120,11 +175,11 @@ function buildRoutes(L) {
     const u = k / 4
     branch.push({ x: lerp(L.xr, cx, u), y: lerp(L.by, cy, ease(u, 'easeInOutQuad')) })
   }
-  const mk = (path) => {
+  const mk = (name, path) => {
     const a = path[path.length - 2]
-    return { path, angle: Math.atan2(a.y - cy, a.x - cx), busy: 0 }
+    return { name, path, angle: Math.atan2(a.y - cy, a.x - cx), busy: 0 }
   }
-  return [mk(top), mk(bottom), mk(branch)]
+  return [mk('top', top), mk('bottom', bottom), mk('branch', branch)]
 }
 
 function makeCanvas(w, h, dpr) {
@@ -455,11 +510,18 @@ function buildOverlayPath(L) {
 function ensureLayout(context) {
   const w = context.width
   const h = context.height
-  if (st.L && st.L.w === w && st.L.h === h) return
-  const dpr = context.renderer?.dpr || window.devicePixelRatio || 1
-  const oldRoutesBusy = st.L ? st.L.routes.map((r) => r.busy) : null
-  st.L = computeLayout(w, h)
-  if (oldRoutesBusy) st.L.routes.forEach((r, i) => { r.busy = oldRoutesBusy[i] })
+  const UL = context.layout
+  const pf = UL?.playfield || { x: 0, y: 0, w, h }
+  const key = `${w}x${h}:${pf.x},${pf.y},${pf.w},${pf.h}`
+  refreshButtons(context)
+  if (st.L && st.L.key === key) return
+  const dpr = context.renderer?.dpr || (typeof window !== 'undefined' && window.devicePixelRatio) || 1
+  const oldBusy = st.L ? new Map(st.L.routes.map((r) => [r.name, r.busy])) : null
+  st.L = computeLayout(w, h, UL)
+  // rotas cujo caminho passa sob os botões virtuais ficam fora (sobram >= 2)
+  const clear = st.L.routes.filter((r) => pathClear(r.path, 30 * st.L.s))
+  if (clear.length >= 2) st.L.routes = clear
+  if (oldBusy) st.L.routes.forEach((r) => { r.busy = oldBusy.get(r.name) || 0 })
   st.dpr = dpr
   st.sprites = new Map()
   st.bg = buildStatic(st.L, dpr)
@@ -468,6 +530,29 @@ function ensureLayout(context) {
   rebuildMarksLayer()
   const { cx, cy, R, s } = st.L
   st.player.ctrl = rebuildController(st.player.ctrl, cx, cy, R, s)
+}
+
+function refreshButtons(context) {
+  const c = context.controls
+  st.buttons = c && c.getButtons && context.layout ? c.getButtons(context.layout) : []
+}
+
+function nearButtons(x, y, pad) {
+  for (const b of st.buttons) if (Math.hypot(x - b.x, y - b.y) < b.r + pad) return true
+  return false
+}
+
+function pathClear(path, pad) {
+  if (!st.buttons.length) return true
+  for (let i = 0; i < path.length - 1; i++) {
+    const a = path[i]
+    const b = path[i + 1]
+    const n = Math.max(1, Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / 10))
+    for (let k = 0; k <= n; k++) {
+      if (nearButtons(lerp(a.x, b.x, k / n), lerp(a.y, b.y, k / n), pad)) return false
+    }
+  }
+  return true
 }
 
 function rebuildController(prev, cx, cy, R, s) {
@@ -484,7 +569,7 @@ function rebuildController(prev, cx, cy, R, s) {
 // Spawns
 // ============================================================================
 
-function edgePoint(angle) {
+function edgePointRaw(angle) {
   const { w, h, cx, cy } = st.L
   const m = 34
   const dx = Math.cos(angle)
@@ -497,9 +582,15 @@ function edgePoint(angle) {
   return { x: cx + dx * t, y: cy + dy * t }
 }
 
-function levelAt(t) {
-  const wv = waveAt(t)
-  return Math.min(5.6, wv.index + clamp(wv.local / WAVE_LEN, 0, 1) * 0.6 + Math.min(1.8, st.shift * 0.35))
+// Ponto de chegada na borda cuja rota reta até a entrada não passa sob os botões.
+function edgePoint(angle) {
+  const { cx, cy, s } = st.L
+  for (let i = 0; i < 14; i++) {
+    const a = angle + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.35
+    const p = edgePointRaw(a)
+    if (pathClear([p, { x: cx, y: cy }], 40 * s)) return { ...p, angle: a }
+  }
+  return { ...edgePointRaw(angle), angle }
 }
 
 function waveAt(t) {
@@ -508,7 +599,7 @@ function waveAt(t) {
   return { index: i, local, inWave: local >= 0 && local <= WAVE_LEN }
 }
 
-function spawnForager(lvl, angle = rand(0, TAU)) {
+function spawnForager(T, angle = rand(0, TAU)) {
   const { s, cx, cy } = st.L
   const p = edgePoint(angle)
   const f = {
@@ -519,33 +610,34 @@ function spawnForager(lvl, angle = rand(0, TAU)) {
     vx: 0, vy: 0, spin: 0, dazeT: 0, enterT: 0, trail: [], trailT: 0,
   }
   st.foragers.push(f)
-  const tailChance = lvl >= 2.2 ? Math.min(0.42, 0.11 * (lvl - 1.6)) : 0
-  if (Math.random() < tailChance) {
-    const fl = makeFly(p.x - Math.cos(f.dir) * 30 * s, p.y - Math.sin(f.dir) * 30 * s, lvl)
+  if (Math.random() < T.tail) {
+    const fl = makeFly(p.x - Math.cos(f.dir) * 30 * s, p.y - Math.sin(f.dir) * 30 * s, T)
     fl.mode = 'tail'
     fl.host = f
   }
   return f
 }
 
-function makeFly(x, y, lvl) {
+function makeFly(x, y, T) {
   const { s } = st.L
   const f = {
-    x, y, t: rand(0, 3), seed: (Math.random() * 1e6) | 0,
+    kind: 'fly', x, y, t: rand(0, 3), seed: (Math.random() * 1e6) | 0,
     mode: 'hover', hoverT: 0.02, wx: x, wy: y, angle: 0,
-    speed: (145 + 11 * lvl) * s * rand(0.9, 1.1),
-    hoverMul: Math.max(0.45, 1 - 0.07 * lvl),
-    dodgeChance: Math.min(0.55, 0.08 + 0.07 * lvl),
-    dodgeDelay: -1, host: null,
+    speed: T.flySpeed * s * rand(0.9, 1.1),
+    hoverMul: T.flyHover,
+    erratic: T.flyErratic,
+    dodgeChance: T.flyDodge,
+    dodgeDelay: -1, host: null, dead: false,
   }
   st.flies.push(f)
   st.stats.spawned++
   return f
 }
 
-function spawnFly(angle, lvl) {
+function spawnFly(angle, T) {
   const p = edgePoint(angle)
-  return makeFly(p.x, p.y, lvl)
+  makeFly(p.x, p.y, T)
+  return p.angle
 }
 
 function pickRoute(avoidAngle = null) {
@@ -558,42 +650,52 @@ function pickRoute(avoidAngle = null) {
   return pool[(Math.random() * pool.length) | 0]
 }
 
-function spawnAntColumn(route, lvl) {
+function spawnAntColumn(route, T) {
   const { s } = st.L
-  const speed = (44 + 4.5 * lvl) * s
-  // intervalo entre formigas ~ ciclo de investida: fila vencível, mas sem folga
-  const gap = Math.max(0.85, rand(1.05, 1.35) - 0.04 * lvl)
-  const total = Math.min(7, 2 + Math.floor(lvl * 0.5) + ((Math.random() * 2) | 0))
-  const spawner = createPatternSpawner({
-    pattern: 'file', path: route.path, speed, spawnRate: 1 / gap, maxEntities: 12,
+  const col = {
+    route,
+    total: T.antsPerCol + (Math.random() < 0.5 ? 1 : 0),
+    spawned: 0,
+    timer: 0, // primeira formiga sai já
+    gap: T.antGap * rand(0.92, 1.12),
+    spawner: null,
+  }
+  col.spawner = createPatternSpawner({
+    pattern: 'file', path: route.path, speed: T.antSpeed * s, spawnRate: 0, maxEntities: 12,
+    onExit: (e) => {
+      e.dead = true
+      breach(e.x, e.y, 'ant')
+    },
   })
-  spawner._timeSinceSpawn = 1 / spawner.spawnRate // primeira formiga sai já
   route.busy++
-  st.cols.push({ spawner, route, total, spawned: 0, known: new Map() })
+  st.cols.push(col)
 }
 
-function spawnIntruderGroup(lvl) {
-  const activeCols = st.cols.length
-  const dbl = lvl >= 2 && Math.random() < Math.min(0.55, 0.15 * (lvl - 1.2))
+function spawnIntruderGroup(T) {
   let approach
-  if (Math.random() < 0.42 && activeCols < 2) {
+  if (Math.random() < T.antShare && st.cols.length < T.maxCols) {
     const r = pickRoute()
-    spawnAntColumn(r, lvl)
+    spawnAntColumn(r, T)
     approach = r.angle
   } else {
-    approach = rand(0, TAU)
-    spawnFly(approach, lvl)
+    approach = spawnFly(rand(0, TAU), T)
   }
+  const dbl = Math.random() < T.dbl
   if (dbl) {
     const opposite = approach + Math.PI + rand(-0.6, 0.6)
-    if (Math.random() < 0.4 && st.cols.length < 2) {
-      spawnAntColumn(pickRoute(approach), lvl)
+    if (Math.random() < 0.4 && st.cols.length < T.maxCols) {
+      spawnAntColumn(pickRoute(approach), T)
     } else {
-      spawnFly(opposite, lvl)
-      if (lvl > 5 && Math.random() < 0.35) spawnFly(opposite + rand(-0.5, 0.5), lvl)
+      spawnFly(opposite, T)
+      if (Math.random() < T.triple) spawnFly(opposite + rand(-0.5, 0.5), T)
     }
   }
   return dbl
+}
+
+function forEachIntruder(fn) {
+  for (const f of st.flies) fn(f)
+  for (const c of st.cols) for (const e of c.spawner.entities) fn(e)
 }
 
 // ============================================================================
@@ -601,19 +703,24 @@ function spawnIntruderGroup(lvl) {
 // ============================================================================
 
 function resetState(data) {
+  const difficulty = clamp(Number.isFinite(data?.difficulty) ? data.difficulty : 0.1, 0, 1)
   st = {
-    L: null, bg: null, entrance: null, ticks: null, sprites: new Map(), dpr: 1, marksLayer: null,
+    L: null, bg: null, entrance: null, ticks: null, sprites: new Map(), dpr: 1, marksLayer: null, buttons: [],
     shift: Math.max(0, data?.shiftIndex ?? 0),
+    difficulty,
+    tune: tuningFor(difficulty, 0),
     time: 0, clock: 0, hitStop: 0, shake: 0, ended: false, endT: 0, finished: false,
     foragerTimer: 1.0, intruderTimer: WAVE_FIRST + 0.3, lastWave: -1,
     foragers: [], flies: [], cols: [], debris: [], fx: [], marks: [],
-    stats: { repelled: 0, breaches: 0, friendly: 0, spawned: 0, entered: 0 },
+    stats: { repelled: 0, breaches: 0, friendly: 0, spawned: 0, entered: 0, alarms: 0, byAlarm: 0 },
     entranceShake: 0, breachFlash: 0,
+    meter: createMeter({ chargeTime: lerp(34, 46, difficulty), duration: ALARM_TIME }),
+    alarm: null, helpers: [],
+    drag: null,
     player: {
       ctrl: null, facing: -Math.PI / 2, phase: 'ready', phaseT: 0, dir: { x: 0, y: -1 },
-      from: null, to: null, buffer: null, readyPulse: 0, recoverDur: RECOVER_MISS, moving: 0,
+      from: null, to: null, buffer: null, readyPulse: 0, recoverDur: 0.5, moving: 0, aim: null, windup: 0.2,
     },
-    prevSpace: false, prevPtr: null, ptrActive: 0,
   }
 }
 
@@ -630,7 +737,6 @@ function update(context, rawDt) {
   }
   st.time += dt
   const t = st.time
-  const L = st.L
 
   st.shake = Math.max(0, st.shake - dt * 2.2)
   st.entranceShake = Math.max(0, st.entranceShake - dt)
@@ -641,32 +747,36 @@ function update(context, rawDt) {
     st.endT = 0
   }
 
+  st.meter.update(dt)
+  const T = (st.tune = tuningFor(st.difficulty, inShiftRamp(t, DURATION)))
+
   // --- diretor de ondas ---
   if (!st.ended && t < DURATION - 2.5) {
     const wv = waveAt(t)
-    const lvl = levelAt(t)
     if (wv.inWave && wv.index !== st.lastWave) {
       st.lastWave = wv.index
       st.intruderTimer = Math.min(st.intruderTimer, 0.35)
     }
     st.foragerTimer -= dt
     if (st.foragerTimer <= 0) {
-      spawnForager(lvl)
-      st.foragerTimer = (wv.inWave ? Math.max(1.5, 3.7 - 0.22 * lvl) : 2.3) * rand(0.7, 1.3)
+      spawnForager(T)
+      st.foragerTimer = (wv.inWave ? T.foragerGap : 2.4) * rand(0.7, 1.3)
     }
     if (wv.inWave) {
       st.intruderTimer -= dt
       if (st.intruderTimer <= 0) {
-        const dbl = spawnIntruderGroup(lvl)
-        st.intruderTimer = Math.max(1.6, 4.1 - 0.3 * lvl) * rand(0.8, 1.2) * (dbl ? 1.5 : 1)
+        const dbl = spawnIntruderGroup(T)
+        st.intruderTimer = T.intruderGap * rand(0.8, 1.2) * (dbl ? 1.5 : 1)
       }
     }
   }
 
+  const slow = st.meter.isActive ? ALARM_SLOW : 1
   updatePlayer(context, dt)
-  updateAnts(dt)
+  updateAnts(dt, slow)
   updateForagers(dt)
-  updateFlies(dt)
+  updateFlies(dt * slow)
+  updateAlarm(dt)
   updateDebris(dt)
 
   for (const f of st.fx) f.t += dt
@@ -679,77 +789,113 @@ function update(context, rawDt) {
       finish(context)
     }
   }
-  void L
 }
 
 function handleInput(context, dt) {
-  const input = context.input
+  const ctl = context.controls
   const pl = st.player
-  const L = st.L
-  const clicks = input.consumeClicks()
-  const space = input.isKeyDown('Space')
-  const ptr = input.getPointer()
-  if (st.prevPtr && Math.hypot(ptr.x - st.prevPtr.x, ptr.y - st.prevPtr.y) > 0.5) st.ptrActive = 1.5
-  st.prevPtr = ptr
-  st.ptrActive = Math.max(0, st.ptrActive - dt)
-
-  const kv = keyVector(input)
   if (pl.buffer) {
     pl.buffer.t -= dt
     if (pl.buffer.t <= 0) pl.buffer = null
   }
-  if (st.ended) {
-    st.prevSpace = space
-    return
-  }
-  if (clicks.length) {
-    const c = clicks[clicks.length - 1]
-    pl.buffer = { t: BUFFER, x: c.x, y: c.y }
-  } else if (space && !st.prevSpace) {
-    const pos = pl.ctrl.position
-    if (kv.x || kv.y) {
-      pl.buffer = { t: BUFFER, x: pos.x + kv.x * 100, y: pos.y + kv.y * 100 }
-    } else if (st.ptrActive > 0) {
-      pl.buffer = { t: BUFFER, x: ptr.x, y: ptr.y }
+  if (st.ended || !ctl) return
+  if (ctl.specialPressed) triggerAlarm()
+
+  const { s } = st.L
+  const pos = pl.ctrl.position
+  if (ctl.pointerTap) {
+    const tp = ctl.pointerTap
+    const target = pickTapTarget(tp.x, tp.y)
+    pl.buffer = { t: BUFFER, x: target ? target.x : tp.x, y: target ? target.y : tp.y, target }
+  } else if (ctl.actionPressed) {
+    const kv = ctl.move && ctl.move.vx != null && (ctl.move.vx || ctl.move.vy) ? ctl.move : null
+    if (kv) {
+      pl.buffer = { t: BUFFER, x: pos.x + kv.vx * 100 * s, y: pos.y + kv.vy * 100 * s, target: null }
     } else {
-      pl.buffer = { t: BUFFER, x: pos.x + Math.cos(pl.facing) * 100, y: pos.y + Math.sin(pl.facing) * 100 }
+      const target = pickAheadTarget(pos, pl.facing, ctl.isTouch)
+      pl.buffer = target
+        ? { t: BUFFER, x: target.x, y: target.y, target }
+        : { t: BUFFER, x: pos.x + Math.cos(pl.facing) * 100 * s, y: pos.y + Math.sin(pl.facing) * 100 * s, target: null }
     }
   }
-  st.prevSpace = space
-  void L
 }
 
-function keyVector(input) {
-  const k = (c) => (input.isKeyDown(c) ? 1 : 0)
-  return {
-    x: (k('KeyD') || k('ArrowRight')) - (k('KeyA') || k('ArrowLeft')),
-    y: (k('KeyS') || k('ArrowDown')) - (k('KeyW') || k('ArrowUp')),
+// Toque/clique: a mira gruda no intruso mais próximo do ponto tocado. Se uma
+// forrageira está claramente mais perto do toque, respeita o toque cru.
+function pickTapTarget(x, y) {
+  const snap = Math.max(46, 36 * st.L.cs)
+  let best = null
+  let bd = snap
+  forEachIntruder((o) => {
+    const d = Math.hypot(o.x - x, o.y - y)
+    if (d < bd) {
+      bd = d
+      best = o
+    }
+  })
+  if (!best) return null
+  for (const f of st.foragers) {
+    if (f.state !== 'enter' && Math.hypot(f.x - x, f.y - y) < bd * 0.6) return null
   }
+  return best
+}
+
+// Botão Ação: intruso mais próximo à frente (cone largo no toque, estreito no PC).
+function pickAheadTarget(pos, facing, touch) {
+  const { s } = st.L
+  const cone = touch ? 1.35 : 0.3
+  const range = (touch ? 200 : 150) * s
+  let best = null
+  let bestScore = Infinity
+  forEachIntruder((o) => {
+    const d = Math.hypot(o.x - pos.x, o.y - pos.y)
+    if (d > range) return
+    const da = Math.abs(angDiff(facing, Math.atan2(o.y - pos.y, o.x - pos.x)))
+    if (da > cone && d > 30 * s) return
+    const score = d * (1 + da * 0.8)
+    if (score < bestScore) {
+      bestScore = score
+      best = o
+    }
+  })
+  return best
 }
 
 function updatePlayer(context, dt) {
   const pl = st.player
   const { s, cx, cy, R } = st.L
-  const input = context.input
+  const ctl = context.controls
   const pos = pl.ctrl.position
+  const T = st.tune
   pl.readyPulse = Math.max(0, pl.readyPulse - dt * 3)
 
   // vetor de movimento
-  let mv = keyVector(input)
-  if (!mv.x && !mv.y && input.isPointerDown() && !st.ended) {
-    const p = input.getPointer()
-    const dx = p.x - pos.x
-    const dy = p.y - pos.y
-    const d = Math.hypot(dx, dy)
-    if (d > 5 * s) {
-      const k = Math.min(1, d / (40 * s)) / d
-      mv = { x: dx * k, y: dy * k }
+  let mv = { x: 0, y: 0 }
+  const m = ctl?.move
+  if (m && m.vx != null) {
+    mv = { x: m.vx, y: m.vy }
+    st.drag = null
+  } else if (m && m.targetX != null) {
+    // arrastar move; um toque curto é investida — só segue depois de segurar/arrastar
+    if (!st.drag) st.drag = { t: 0, x: m.pointerX, y: m.pointerY, go: false }
+    st.drag.t += dt
+    if (!st.drag.go && (st.drag.t > 0.2 || Math.hypot(m.pointerX - st.drag.x, m.pointerY - st.drag.y) > 14)) st.drag.go = true
+    if (st.drag.go) {
+      const dx = m.targetX - pos.x
+      const dy = m.targetY - pos.y
+      const d = Math.hypot(dx, dy)
+      if (d > 4 * s) {
+        const k = Math.min(1, d / (36 * s)) / d
+        mv = { x: dx * k, y: dy * k }
+      }
     }
+  } else {
+    st.drag = null
   }
   if (st.ended) mv = { x: 0, y: 0 }
 
   if (pl.phase === 'ready' || pl.phase === 'recover') {
-    pl.ctrl.setSpeedMultiplier(pl.phase === 'recover' ? 0.5 : 1)
+    pl.ctrl.setSpeedMultiplier(pl.phase === 'recover' ? 0.6 : 1)
     pl.ctrl.update(dt, mv)
     clampToZone(pl.ctrl, cx, cy, R)
     const mag = Math.hypot(mv.x, mv.y)
@@ -769,11 +915,9 @@ function updatePlayer(context, dt) {
     }
   }
 
-  if (pl.phase === 'ready' && pl.buffer && !st.ended) {
-    const b = pl.buffer
-    pl.buffer = null
-    let dx = b.x - pos.x
-    let dy = b.y - pos.y
+  const aimAt = (x, y) => {
+    let dx = x - pos.x
+    let dy = y - pos.y
     let d = Math.hypot(dx, dy)
     if (d < 4 * s) {
       dx = Math.cos(pl.facing)
@@ -782,18 +926,29 @@ function updatePlayer(context, dt) {
     }
     pl.dir = { x: dx / d, y: dy / d }
     pl.facing = Math.atan2(pl.dir.y, pl.dir.x)
+  }
+
+  if (pl.phase === 'ready' && pl.buffer && !st.ended) {
+    const b = pl.buffer
+    pl.buffer = null
+    pl.aim = b.target && !b.target.dead ? b.target : null
+    aimAt(pl.aim ? pl.aim.x : b.x, pl.aim ? pl.aim.y : b.y)
     pl.phase = 'windup'
     pl.phaseT = 0
+    pl.windup = T.windup
     provokeDodges(pos, pl.dir)
   } else if (pl.phase === 'windup') {
     pl.phaseT += dt
-    if (pl.phaseT >= WINDUP) {
-      const Ls = 92 * s
+    // assistência: a mira acompanha o alvo escolhido durante o preparo
+    if (pl.aim && !pl.aim.dead) aimAt(pl.aim.x, pl.aim.y)
+    if (pl.phaseT >= pl.windup) {
       const p = pl.ctrl.position
+      let Ls = 96 * s
+      if (pl.aim && !pl.aim.dead) Ls = clamp(Math.hypot(pl.aim.x - p.x, pl.aim.y - p.y) + 12 * s, 64 * s, 124 * s)
       let tx = p.x + pl.dir.x * Ls
       let ty = p.y + pl.dir.y * Ls
       const d = Math.hypot(tx - cx, ty - cy)
-      const lim = R + 18 * s
+      const lim = R + 26 * s
       if (d > lim) {
         tx = cx + ((tx - cx) / d) * lim
         ty = cy + ((ty - cy) / d) * lim
@@ -802,11 +957,12 @@ function updatePlayer(context, dt) {
       pl.to = { x: tx, y: ty }
       pl.phase = 'lunge'
       pl.phaseT = 0
+      pl.aim = null
     }
   } else if (pl.phase === 'lunge') {
     const prevU = ease(pl.phaseT / LUNGE, 'easeOutCubic')
     pl.phaseT += dt
-    const u = ease(pl.phaseT / LUNGE, 'easeOutCubic')
+    const u = ease(Math.min(1, pl.phaseT / LUNGE), 'easeOutCubic')
     let hit = false
     for (let k = 1; k <= 3 && !hit; k++) {
       const uu = lerp(prevU, u, k / 3)
@@ -820,11 +976,11 @@ function updatePlayer(context, dt) {
       pl.ctrl.setPosition(p.x - pl.dir.x * 9 * s, p.y - pl.dir.y * 9 * s)
       pl.phase = 'recover'
       pl.phaseT = 0
-      pl.recoverDur = RECOVER_HIT
+      pl.recoverDur = T.recoverHit
     } else if (pl.phaseT >= LUNGE) {
       pl.phase = 'recover'
       pl.phaseT = 0
-      pl.recoverDur = RECOVER_MISS
+      pl.recoverDur = T.recoverMiss
       const p = pl.ctrl.position
       st.fx.push({ kind: 'whiff', x: p.x + pl.dir.x * 16 * s, y: p.y + pl.dir.y * 16 * s, a: Math.atan2(pl.dir.y, pl.dir.x), t: 0, life: 0.35 })
     }
@@ -842,7 +998,7 @@ function provokeDodges(pos, dir) {
   const { s } = st.L
   const Ls = 90 * s
   for (const f of st.flies) {
-    if (f.mode === 'tail') continue
+    if (f.mode === 'tail' || f.dodgeChance <= 0) continue
     const rx = f.x - pos.x
     const ry = f.y - pos.y
     const along = rx * dir.x + ry * dir.y
@@ -859,56 +1015,35 @@ function provokeDodges(pos, dir) {
 }
 
 const ANT_R = 14
-const FLY_R = 11
+const FLY_R = 12
 const FORAGER_R = 19
 const HEAD_R = 13
 
 // Resolve o primeiro contato da investida. Retorna true se acertou algo.
 function strike(hx, hy) {
-  const { s } = st.L
-  let any = false
-  const hits = { foragers: [], flies: [], ants: false }
+  const { s, cs } = st.L
+  const hitsForagers = []
+  const hitsIntruders = []
   for (const f of st.foragers) {
     if (f.state === 'enter') continue
-    if (Math.hypot(f.x - hx, f.y - hy) < (HEAD_R + FORAGER_R) * s) hits.foragers.push(f)
+    if (Math.hypot(f.x - hx, f.y - hy) < HEAD_R * s + FORAGER_R * cs * 0.9) hitsForagers.push(f)
   }
   for (const f of st.flies) {
-    if (Math.hypot(f.x - hx, f.y - hy) < (HEAD_R + FLY_R) * s) hits.flies.push(f)
+    if (Math.hypot(f.x - hx, f.y - hy) < HEAD_R * s + FLY_R * cs) hitsIntruders.push(f)
   }
   for (const c of st.cols) {
     for (const e of c.spawner.entities) {
-      if (Math.hypot(e.x - hx, e.y - hy) < (HEAD_R + ANT_R) * s) hits.ants = true
+      if (Math.hypot(e.x - hx, e.y - hy) < HEAD_R * s + ANT_R * cs) hitsIntruders.push(e)
     }
   }
-  if (!hits.foragers.length && !hits.flies.length && !hits.ants) return false
+  if (!hitsForagers.length && !hitsIntruders.length) return false
 
   const pl = st.player
   const ax = pl.dir.x
   const ay = pl.dir.y
   const kick = 260 * s
-
-  for (const f of hits.flies) {
-    any = true
-    st.flies.splice(st.flies.indexOf(f), 1)
-    st.stats.repelled++
-    st.debris.push({ kind: 'fly', x: f.x, y: f.y, vx: ax * kick * 1.2 + rand(-40, 40) * s, vy: ay * kick * 1.2 - 80 * s, rot: f.angle, spin: rand(-18, 18), t: 0, life: 0.9, seed: f.seed })
-    burst(f.x, f.y, false)
-  }
-  if (hits.ants) {
-    for (const c of st.cols) {
-      const caught = c.spawner.checkCapture({ x: hx, y: hy }, (HEAD_R + ANT_R) * s)
-      for (const e of caught) {
-        const k = c.known.get(e.id)
-        c.known.delete(e.id)
-        any = true
-        st.stats.repelled++
-        st.debris.push({ kind: 'ant', x: e.x, y: e.y, vx: ax * kick + rand(-30, 30) * s, vy: ay * kick - 120 * s, rot: k ? k.rot : 0, spin: rand(-14, 14), t: 0, life: 1.1, seed: k ? k.seed : 1 })
-        burst(e.x, e.y, false)
-      }
-    }
-  }
-  for (const f of hits.foragers) {
-    any = true
+  for (const o of hitsIntruders) repel(o, ax, ay)
+  for (const f of hitsForagers) {
     st.stats.friendly++
     f.state = 'dazed'
     f.dazeT = 1.7
@@ -917,12 +1052,33 @@ function strike(hx, hy) {
     f.spin = rand(-9, 9)
     burst(f.x, f.y, true)
   }
-  if (any) {
-    const friendly = hits.foragers.length > 0
-    st.hitStop = friendly ? 0.13 : 0.07
-    st.shake = Math.max(st.shake, friendly ? 0.35 : 0.18)
+  const friendly = hitsForagers.length > 0
+  st.hitStop = friendly ? 0.13 : 0.07
+  st.shake = Math.max(st.shake, friendly ? 0.35 : 0.18)
+  return true
+}
+
+// Remove um intruso (mosca ou formiga) arremessando-o para longe.
+function repel(o, ax, ay, byAlarm = false) {
+  if (o.dead) return
+  o.dead = true
+  const { s } = st.L
+  const kick = 260 * s
+  if (o.kind === 'fly') {
+    const i = st.flies.indexOf(o)
+    if (i >= 0) st.flies.splice(i, 1)
+    st.debris.push({ kind: 'fly', x: o.x, y: o.y, vx: ax * kick * 1.2 + rand(-40, 40) * s, vy: ay * kick * 1.2 - 80 * s, rot: o.angle, spin: rand(-18, 18), t: 0, life: 0.9, seed: o.seed })
+  } else {
+    for (const c of st.cols) {
+      const i = c.spawner.entities.indexOf(o)
+      if (i >= 0) c.spawner.entities.splice(i, 1)
+    }
+    st.debris.push({ kind: 'ant', x: o.x, y: o.y, vx: ax * kick + rand(-30, 30) * s, vy: ay * kick - 120 * s, rot: o.rot || 0, spin: rand(-14, 14), t: 0, life: 1.1, seed: o.seed || 1 })
   }
-  return any
+  st.stats.repelled++
+  if (byAlarm) st.stats.byAlarm++
+  else st.meter.add(CHARGE_PER_REPEL)
+  burst(o.x, o.y, false)
 }
 
 function burst(x, y, friendly) {
@@ -931,6 +1087,14 @@ function burst(x, y, friendly) {
 
 function breach(x, y, kind) {
   const { cx, cy } = st.L
+  if (st.ended) return
+  if (st.meter.isActive) {
+    // guardiãs recrutadas barram na entrada: não conta como brecha
+    st.stats.repelled++
+    st.stats.byAlarm++
+    burst(cx, cy, false)
+    return
+  }
   st.stats.breaches++
   st.stats['breach_' + kind] = (st.stats['breach_' + kind] || 0) + 1
   st.marks.push({ a: Math.atan2(y - cy, x - cx), seed: (Math.random() * 1e6) | 0 })
@@ -941,39 +1105,31 @@ function breach(x, y, kind) {
   st.fx.push({ kind: 'breach', x: cx, y: cy, t: 0, life: 0.6 })
 }
 
-function updateAnts(dt) {
-  const { cx, cy } = st.L
+function updateAnts(dt, slow) {
   for (const c of st.cols) {
-    c.spawner.update(dt)
-    const alive = new Set()
-    for (const e of c.spawner.entities) {
-      alive.add(e.id)
-      let k = c.known.get(e.id)
-      if (!k) {
-        k = { x: e.x, y: e.y, rot: Math.atan2(c.route.path[1].y - e.y, c.route.path[1].x - e.x), seed: (Math.random() * 1e6) | 0, t: rand(0, 2) }
-        c.known.set(e.id, k)
-        c.spawned++
-        st.stats.spawned++
-        if (c.spawned >= c.total) c.spawner.spawnRate = 0
-      }
-      const dx = e.x - k.x
-      const dy = e.y - k.y
-      if (dx * dx + dy * dy > 0.01) {
-        k.rot += angDiff(k.rot, Math.atan2(dy, dx)) * Math.min(1, dt * 14)
-      }
-      k.x = e.x
-      k.y = e.y
-      k.t += dt
+    c.timer -= dt
+    if (!st.ended && c.spawned < c.total && c.timer <= 0) {
+      const p = c.route.path
+      c.spawner.spawn({
+        kind: 'ant', rot: Math.atan2(p[1].y - p[0].y, p[1].x - p[0].x),
+        seed: (Math.random() * 1e6) | 0, t: rand(0, 2), px: p[0].x, py: p[0].y, dead: false,
+      })
+      c.spawned++
+      st.stats.spawned++
+      c.timer = c.gap
     }
-    for (const [id, k] of c.known) {
-      if (!alive.has(id)) {
-        c.known.delete(id)
-        if (Math.hypot(k.x - cx, k.y - cy) < 40 * st.L.s) breach(k.x, k.y, 'ant')
-      }
+    c.spawner.update(dt * slow)
+    for (const e of c.spawner.entities) {
+      const dx = e.x - e.px
+      const dy = e.y - e.py
+      if (dx * dx + dy * dy > 0.01) e.rot += angDiff(e.rot, Math.atan2(dy, dx)) * Math.min(1, dt * 14)
+      e.px = e.x
+      e.py = e.y
+      e.t += dt * slow
     }
   }
   st.cols = st.cols.filter((c) => {
-    const done = c.spawned >= c.total && c.spawner.entities.length === 0
+    const done = (c.spawned >= c.total || st.ended) && c.spawner.entities.length === 0
     if (done) c.route.busy = Math.max(0, c.route.busy - 1)
     return !done
   })
@@ -1094,6 +1250,7 @@ function updateFlies(dt) {
         f.dodgeBoost = 1
         if (Math.hypot(f.x - cx, f.y - cy) < 8 * s) {
           removed.push(f)
+          f.dead = true
           breach(f.x, f.y, f.host ? 'tail' : 'fly')
           continue
         }
@@ -1125,11 +1282,103 @@ function pickFlyWaypoint(f) {
   }
   const inside = D < R * 1.15
   const step = Math.min(D - 4 * s, (inside ? rand(38, 78) : rand(110, 190)) * s)
-  const lat = (Math.random() * 2 - 1) * (inside ? 58 : 85) * s * Math.min(1, D / R)
+  const lat = (Math.random() * 2 - 1) * (inside ? 58 : 85) * s * Math.min(1, D / R) * (f.erratic ?? 1)
   const ux = dx / D
   const uy = dy / D
   f.wx = f.x + ux * step - uy * lat
   f.wy = f.y + uy * step + ux * lat
+}
+
+// ============================================================================
+// Alarme de feromônio
+// ============================================================================
+
+function triggerAlarm() {
+  if (st.ended || !st.meter.activate()) return
+  const { cx, cy, s } = st.L
+  st.stats.alarms++
+  st.alarm = { t: 0 }
+  st.shake = Math.max(st.shake, 0.22)
+  st.entranceShake = 0.35
+  for (let i = 0; i < ALARM_HELPERS; i++) {
+    const a = -Math.PI / 2 + (i / ALARM_HELPERS) * TAU + rand(-0.2, 0.2)
+    st.helpers.push({
+      x: cx, y: cy, dir: a, orbit: a, t: rand(0, 1), delay: 0.15 + i * 0.09,
+      target: null, state: 'out', speed: 440 * s * rand(0.94, 1.06), alpha: 0, seed: i,
+    })
+  }
+}
+
+function claimTarget(hp) {
+  const { w, h } = st.L
+  const claimed = new Set(st.helpers.map((o) => (o !== hp ? o.target : null)))
+  let best = null
+  let bd = Infinity
+  let fallback = null
+  let fd = Infinity
+  forEachIntruder((o) => {
+    if (o.dead || o.x < -40 || o.x > w + 40 || o.y < -40 || o.y > h + 40) return
+    const d = Math.hypot(o.x - hp.x, o.y - hp.y)
+    if (!claimed.has(o) && d < bd) {
+      bd = d
+      best = o
+    }
+    if (d < fd) {
+      fd = d
+      fallback = o
+    }
+  })
+  return best || fallback
+}
+
+function updateAlarm(dt) {
+  const { s, cs, cx, cy, R } = st.L
+  if (st.alarm) {
+    st.alarm.t += dt
+    if (!st.meter.isActive && st.alarm.t > 1.4) st.alarm = null
+  }
+  const active = st.meter.isActive
+  for (const hp of st.helpers) {
+    hp.t += dt
+    if (hp.delay > 0) {
+      hp.delay -= dt
+      continue
+    }
+    hp.alpha = Math.min(1, hp.alpha + dt * 5)
+    if (!active && hp.state !== 'home') {
+      hp.state = 'home'
+      hp.target = null
+    }
+    let tx
+    let ty
+    if (hp.state === 'home') {
+      tx = cx
+      ty = cy
+      if (Math.hypot(hp.x - cx, hp.y - cy) < 14 * s) hp.gone = true
+    } else {
+      if (!hp.target || hp.target.dead) hp.target = claimTarget(hp)
+      if (hp.target) {
+        tx = hp.target.x
+        ty = hp.target.y
+      } else {
+        hp.orbit += dt * 1.8
+        tx = cx + Math.cos(hp.orbit) * R * 1.1
+        ty = cy + Math.sin(hp.orbit) * R * 1.1
+      }
+    }
+    const desired = Math.atan2(ty - hp.y, tx - hp.x)
+    hp.dir += angDiff(hp.dir, desired) * Math.min(1, dt * 11)
+    const d = Math.hypot(tx - hp.x, ty - hp.y)
+    const step = Math.min(d, hp.speed * dt * (hp.state === 'home' ? 0.7 : 1))
+    hp.x += Math.cos(hp.dir) * step
+    hp.y += Math.sin(hp.dir) * step
+    if (hp.target && !hp.target.dead && Math.hypot(hp.target.x - hp.x, hp.target.y - hp.y) < 16 * s + 12 * cs) {
+      repel(hp.target, Math.cos(hp.dir), Math.sin(hp.dir), true)
+      hp.target = null
+      st.shake = Math.max(st.shake, 0.1)
+    }
+  }
+  st.helpers = st.helpers.filter((hp) => !hp.gone)
 }
 
 function updateDebris(dt) {
@@ -1143,18 +1392,20 @@ function updateDebris(dt) {
     d.rot += d.spin * dt
   }
   st.debris = st.debris.filter((d) => d.t < d.life)
-  if (st.ended) {
-    for (const c of st.cols) c.spawner.spawnRate = 0
-  }
+}
+
+export function scoreFor({ repelled, breaches, friendly }) {
+  const denom = repelled + 1.5 * breaches
+  const base = denom > 0 ? (100 * repelled) / denom : 50
+  return Math.round(clamp(base - 3 * friendly, 0, 100))
 }
 
 function finish(context) {
-  const { repelled, breaches, friendly } = st.stats
-  const denom = repelled + 2 * breaches
-  const base = denom > 0 ? (100 * repelled) / denom : 50
-  const score = Math.round(clamp(base - 4 * friendly, 0, 100))
+  const { repelled, breaches, friendly, byAlarm } = st.stats
+  const score = scoreFor(st.stats)
   const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`
   let summary = `${pl(repelled, 'intruso repelido', 'intrusos repelidos')}, ${pl(breaches, 'brecha', 'brechas')}, ${pl(friendly, 'companheira atingida', 'companheiras atingidas')}`
+  if (byAlarm > 0) summary += ` (${byAlarm} pelo alarme)`
   if (breaches === 0 && friendly === 0 && repelled > 0) summary += ' — entrada intacta'
   context.finishShift({ score, summary })
 }
@@ -1167,7 +1418,8 @@ function render(context, ctx) {
   if (!st) return
   ensureLayout(context)
   const L = st.L
-  const { w, h, s, cx, cy, R } = L
+  const { w, h, s } = L
+  const { cx, cy } = L
   const clock = st.clock
 
   ctx.save()
@@ -1202,15 +1454,14 @@ function render(context, ctx) {
   }
 
   drawInstrument(ctx)
+  drawAlarmPulse(ctx)
 
   const endFade = st.ended ? clamp(1 - st.endT / 0.9, 0, 1) : 1
 
   // formigas (rente à casca)
   const antFrames = antSprites()
   for (const c of st.cols) {
-    for (const k of c.known.values()) {
-      blit(ctx, antFrames, k.t / ANT_PERIOD, k.x, k.y, k.rot, 1, endFade, 1)
-    }
+    for (const e of c.spawner.entities) blit(ctx, antFrames, e.t / ANT_PERIOD, e.x, e.y, e.rot, 1, endFade, 1)
   }
 
   // forrageiras
@@ -1219,7 +1470,7 @@ function render(context, ctx) {
   // moscas
   const flyFrames = flySprites()
   for (const f of st.flies) {
-    const hover = Math.sin(f.t * 9) * 1.2 * 2.2 * s
+    const hover = Math.sin(f.t * 9) * 2.6 * s
     blit(ctx, flyFrames, f.t / FLY_PERIOD, f.x, f.y + hover, f.angle, 1, 1, 1)
   }
 
@@ -1230,6 +1481,7 @@ function render(context, ctx) {
     blit(ctx, frames, d.t * 3, d.x, d.y, d.rot, 1, 1 - ease(u, 'easeInQuad'), 1 + u * 0.25)
   }
 
+  drawHelpers(ctx)
   drawPlayer(ctx)
   drawFx(ctx)
 
@@ -1242,7 +1494,79 @@ function render(context, ctx) {
       ctx.fillRect(0, 0, w, h)
     }
   }
-  void R
+  context.controls?.render?.(ctx, context.layout)
+}
+
+// Pulso do feromônio: anéis técnicos concêntricos (com marcas de escala) saindo
+// da entrada + leve névoa dourada enquanto o alarme dura.
+function drawAlarmPulse(ctx) {
+  if (!st.alarm) return
+  const { s, cx, cy, w, h } = st.L
+  const t = st.alarm.t
+  const maxR = Math.hypot(Math.max(cx, w - cx), Math.max(cy, h - cy)) + 20
+  const active = st.meter.isActive
+  const fade = active ? 1 : clamp(1 - (t - ALARM_TIME) / 1.2, 0, 1)
+  ctx.save()
+  // névoa de feromônio
+  const haze = (active ? 0.22 + 0.06 * Math.sin(t * 5) : 0.22) * fade * clamp(t / 0.3, 0, 1)
+  if (haze > 0.01) {
+    const g = ctx.createRadialGradient(cx, cy, 10 * s, cx, cy, maxR * 0.6)
+    g.addColorStop(0, withAlpha(P.sunHalo, haze * 1.6))
+    g.addColorStop(1, withAlpha(P.sunHalo, 0))
+    ctx.fillStyle = g
+    ctx.fillRect(0, 0, w, h)
+  }
+  ctx.lineCap = 'round'
+  // três anéis na ativação, depois um anel a cada 0,8s enquanto ativo
+  const rings = []
+  for (let i = 0; i < 3; i++) rings.push(t - i * 0.18)
+  if (active) for (let k = 1; k * 0.8 < t; k++) rings.push(t - k * 0.8 - 0.4)
+  for (const rt of rings) {
+    if (rt < 0 || rt > 1.3) continue
+    const u = rt / 1.3
+    const r = lerp(20 * s, maxR, ease(u, 'easeOutCubic'))
+    const a = (1 - u) * 0.7 * Math.max(fade, 0.4)
+    ctx.strokeStyle = withAlpha(P.inkLine, a)
+    ctx.lineWidth = 1.3
+    ctx.beginPath()
+    ctx.arc(cx, cy, r, 0, TAU)
+    ctx.stroke()
+    ctx.strokeStyle = withAlpha(P.caterpillarGold, a * 0.9)
+    ctx.lineWidth = 3 * s
+    ctx.setLineDash([2 * s, 9 * s])
+    ctx.beginPath()
+    ctx.arc(cx, cy, r - 5 * s, 0, TAU)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.strokeStyle = withAlpha(P.inkLine, a * 0.8)
+    ctx.lineWidth = 0.9
+    ctx.beginPath()
+    const n = 48
+    for (let i = 0; i < n; i++) {
+      const ang = (i / n) * TAU + u * 0.4
+      const len = (i % 4 === 0 ? 9 : 4) * s
+      ctx.moveTo(cx + Math.cos(ang) * r, cy + Math.sin(ang) * r)
+      ctx.lineTo(cx + Math.cos(ang) * (r + len), cy + Math.sin(ang) * (r + len))
+    }
+    ctx.stroke()
+  }
+  ctx.restore()
+}
+
+function drawHelpers(ctx) {
+  if (!st.helpers.length) return
+  const fr = beeSprites('helper')
+  for (const hp of st.helpers) {
+    if (hp.delay > 0) continue
+    // rastro curto de feromônio
+    ctx.fillStyle = withAlpha(P.caterpillarGold, 0.35 * hp.alpha)
+    for (let i = 1; i <= 3; i++) {
+      ctx.beginPath()
+      ctx.arc(hp.x - Math.cos(hp.dir) * 9 * i * st.L.s, hp.y - Math.sin(hp.dir) * 9 * i * st.L.s, (2.2 - i * 0.5) * st.L.s, 0, TAU)
+      ctx.fill()
+    }
+    blit(ctx, fr, (hp.t * BEE_FLAP) / TAU, hp.x, hp.y, hp.dir, 1, hp.alpha, 1)
+  }
 }
 
 // Camada de marcas de brecha: refeita só quando há brecha nova (ou resize).
@@ -1279,12 +1603,12 @@ function frames(key, n, box, drawFrame) {
 }
 
 function antSprites() {
-  const sc = 1.6 * st.L.s
+  const sc = 1.6 * st.L.cs
   return frames('ant', 8, 40 * sc, (g, u) => drawAnt(g, createAntPose(0, 0, u * ANT_PERIOD, { scale: sc, seed: 5 })))
 }
 
 function flySprites() {
-  const sc = 2.2 * st.L.s
+  const sc = 2.5 * st.L.cs
   return frames('fly', 12, 30 * sc, (g, u) => {
     const pose = createPhoridFlyPose(0, 0, u * FLY_PERIOD, { scale: sc, seed: 9 })
     pose.hover = 0
@@ -1295,9 +1619,14 @@ function flySprites() {
 function beeSprites(kind) {
   const s = st.L.s
   if (kind === 'forager') {
-    const sc = 1.55 * s
+    const sc = 1.55 * st.L.cs
     return frames('forager', 8, 64 * sc, (g, u) =>
       drawBeeBody(g, createCarryingPose(0, 0, (u * TAU) / FORAGER_FLAP, { colorVariant: 'old', scale: sc, seed: 31, amount: 1.5 })))
+  }
+  if (kind === 'helper') {
+    const sc = 1.6 * s
+    return frames('helper', 8, 64 * sc, (g, u) =>
+      drawBeeBody(g, createFlightPose(0, 0, (u * TAU) / BEE_FLAP, { colorVariant: 'old', scale: sc, seed: 13, flapAmount: 0.9, flapSpeed: BEE_FLAP })))
   }
   const sc = 1.95 * s
   const flapAmount = kind === 'tuck' ? 0.3 : 0.85
@@ -1429,8 +1758,7 @@ function drawForager(ctx, f) {
   ctx.restore()
 
   const bob = f.state === 'fly' ? Math.sin(t * 3.1) * 1.6 * s : 0
-  drawOrientedBee(ctx, beeSprites('forager'), (t * FORAGER_FLAP) / TAU + (f.seed % 8) / 8, f.x, f.y + bob, f.dir,
-    f.state === 'dazed' ? 3 : 0.55, alpha, scale)
+  drawOrientedBee(ctx, beeSprites('forager'), (t * FORAGER_FLAP) / TAU + (f.seed % 8) / 8, f.x, f.y + bob, f.dir, alpha, scale)
   if (f.state === 'dazed') {
     // estrelinhas de atordoamento em órbita técnica
     ctx.save()
@@ -1452,14 +1780,9 @@ function drawForager(ctx, f) {
   }
 }
 
-// A abelha é desenhada em vista lateral: espelha quando voa para a esquerda
-// e limita a inclinação para não voar "de cabeça para baixo".
-function drawOrientedBee(ctx, fr, phase, x, y, angle, maxTilt, alpha, scale) {
-  const c = Math.cos(angle)
-  const sn = Math.sin(angle)
-  const flip = c < 0 ? -1 : 1
-  const rot = clamp(Math.atan2(sn, c * flip), -maxTilt, maxTilt)
-  blit(ctx, fr, phase, x, y, rot, flip, alpha, scale)
+// bee.js desenha em vista de cima (+x = cabeça): basta girar para a direção.
+function drawOrientedBee(ctx, fr, phase, x, y, angle, alpha, scale) {
+  blit(ctx, fr, phase, x, y, angle, 1, alpha, scale)
 }
 
 function haloSprite() {
@@ -1485,32 +1808,27 @@ function drawPlayer(ctx) {
   let scale = 1
   let kind = 'bee'
   const angle = pl.facing
-  let tilt = 0.7
 
   if (pl.phase === 'windup') {
-    const u = ease(pl.phaseT / WINDUP, 'easeOutQuad')
+    const u = ease(clamp(pl.phaseT / pl.windup, 0, 1), 'easeOutQuad')
     x -= pl.dir.x * 7 * s * u
     y -= pl.dir.y * 7 * s * u
     scale *= 1 - 0.06 * u
     kind = 'tuck'
-    tilt = 1.2
-    drawAim(ctx, pos, pl.dir, pl.phaseT / WINDUP)
+    drawAim(ctx, pos, pl.dir, pl.phaseT / pl.windup)
   } else if (pl.phase === 'lunge') {
     scale *= 1.06
     kind = 'tuck'
-    tilt = 1.3
-  } else if (pl.phase === 'recover') {
-    tilt = 1.0
   }
 
   // sombra de pouso (leve) para ancorar na casca
   ctx.fillStyle = 'rgba(43,36,24,0.12)'
   ctx.beginPath()
-  ctx.ellipse(pos.x + 4 * s, pos.y + 16 * s, 16 * s, 5 * s, 0, 0, TAU)
+  ctx.ellipse(pos.x + 5 * s, pos.y + 8 * s, 19 * s, 11 * s, 0, 0, TAU)
   ctx.fill()
 
   const hover = pl.phase === 'ready' ? Math.sin(st.clock * 2.4) * 1.5 * s : 0
-  drawOrientedBee(ctx, beeSprites(kind), (st.clock * BEE_FLAP) / TAU, x, y + hover, angle, tilt, 1, scale)
+  drawOrientedBee(ctx, beeSprites(kind), (st.clock * BEE_FLAP) / TAU, x, y + hover, angle, 1, scale)
 
   // recarga: arco fino com marcas de escala em volta da guardiã
   if (pl.phase === 'recover') {
@@ -1547,7 +1865,7 @@ function drawPlayer(ctx) {
   }
 }
 
-// Único acento accentPink da cena: o vetor da investida durante o preparo.
+// Vetor da investida durante o preparo (tinta; accentPink fica só no botão Especial pronto).
 function drawAim(ctx, pos, dir, u) {
   const { s } = st.L
   const k = ease(clamp(u, 0, 1), 'easeInOutQuad')
@@ -1557,8 +1875,8 @@ function drawAim(ctx, pos, dir, u) {
   const x1 = pos.x + dir.x * (18 * s + (len - 18 * s) * k)
   const y1 = pos.y + dir.y * (18 * s + (len - 18 * s) * k)
   ctx.save()
-  ctx.strokeStyle = withAlpha(P.accentPink, 0.85)
-  ctx.lineWidth = 1.3
+  ctx.strokeStyle = withAlpha(P.inkLine, 0.75)
+  ctx.lineWidth = 1.4
   ctx.setLineDash([5 * s, 3 * s])
   ctx.beginPath()
   ctx.moveTo(x0, y0)
@@ -1634,8 +1952,15 @@ export default {
   id: 'guard',
   enter(context, data) {
     resetState(data)
+    context.controls?.configure?.({
+      showAction: true,
+      showSpecial: true,
+      showDirections: false,
+      meter: st.meter,
+      actionLabel: 'INVESTIR',
+      specialLabel: 'ALARME',
+    })
     ensureLayout(context)
-    context.input?.consumeClicks?.()
   },
   update,
   render,

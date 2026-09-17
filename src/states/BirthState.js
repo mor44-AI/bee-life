@@ -1,6 +1,7 @@
 // BirthState — nascimento (~7.5s): célula de cria sob uma "lente" de instrumento
 // técnico, passando por ovo → larva → pupa (corte lateral) → abelha jovem
-// emergindo. Pulável por clique/tecla. Termina com context.completeBirth().
+// emergindo. Pulável tocando/clicando em qualquer lugar ou por tecla. Termina com
+// context.completeBirth(). Composição na área segura, vertical primeiro.
 
 import { ease } from '../engine/tween.js'
 import { drawCell } from '../art/hive.js'
@@ -8,7 +9,18 @@ import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { seededRandom } from '../art/textureUtils.js'
 import { species } from '../data/species.js'
 import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
-import { createPaperBackdrop, createLayerCache, createKeyWatcher, wrapText, fadeScreen } from '../ui/HUD.js'
+import {
+  createPaperBackdrop,
+  createLayerCache,
+  wrapText,
+  fadeScreen,
+  screenLayout,
+  safeRect,
+  uiScaleOf,
+  anyKeyPressed,
+  isTouchUI,
+  drawHint,
+} from '../ui/HUD.js'
 
 const SKIP_KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const T_LARVA = 2.3
@@ -43,7 +55,6 @@ const pupaCache = createLayerCache((c, w, h) => {
   c.fillRect(0, 0, w, h)
 })
 
-let keys = null
 let t = 0
 let done = false
 let factText = ''
@@ -61,8 +72,6 @@ export default {
   enter(context) {
     t = 0
     done = false
-    keys = createKeyWatcher(context.input, SKIP_KEYS)
-    keys.prime()
     context.input.consumeClicks()
     const first = species.laborDivision?.[0]
     factText = first ? first.description.split(':')[0].replace(/\s+$/, '') + '.' : ''
@@ -70,7 +79,7 @@ export default {
 
   update(context, dt) {
     t += dt
-    const skip = context.input.consumeClicks().length > 0 || keys.poll().size > 0
+    const skip = context.input.consumeClicks().length > 0 || anyKeyPressed(context.input, SKIP_KEYS)
     if (skip || t >= T_END) finish(context)
   },
 
@@ -78,10 +87,13 @@ export default {
     const w = context.width
     const h = context.height
     backdrop.draw(ctx, 0, 0, w, h)
+    const L = screenLayout(context)
+    const SA = safeRect(L)
+    const u = uiScaleOf(L)
 
-    const S = Math.max(34, Math.min(w, h) * 0.13)
-    const cx = w / 2
-    const cy = h * 0.4
+    const S = Math.max(34, Math.min(SA.w * 0.13, SA.h * 0.12))
+    const cx = SA.x + SA.w / 2
+    const cy = SA.y + SA.h * 0.4
     const lensR = S * 2.05
 
     // Lente / instrumento em torno da célula.
@@ -126,7 +138,7 @@ export default {
     const beeScale = beeScaleFor(S)
     const pupaSize = beeScale * 40
     if (pupaIn > 0) {
-      const wide = w > h * 1.05
+      const wide = SA.w > SA.h * 1.05
       const px = wide ? cx + lensR * 1.75 : cx + lensR * 0.62
       const py = wide ? cy : cy - lensR * 1.05
       const pr = pupaSize * (wide ? 0.62 : 0.42)
@@ -150,7 +162,7 @@ export default {
       ctx.save()
       ctx.globalAlpha = pupaIn * 0.6
       ctx.fillStyle = UI.ink
-      ctx.font = font(10)
+      ctx.font = font(12 * u)
       ctx.textAlign = 'center'
       setLetterSpacing(ctx, 1.5)
       ctx.fillText('CORTE', px, py + pr + 14)
@@ -202,7 +214,7 @@ export default {
     }
 
     // Legenda dos estágios (escala horizontal com marcador rosa — acento único).
-    const legendW = Math.min(420, w - 60)
+    const legendW = Math.min(420 * u, SA.w - 100)
     const lx0 = cx - legendW / 2
     const ly = cy + lensR * 1.12 + 44
     const lp = seg(t, 0.4, 1.4)
@@ -229,8 +241,8 @@ export default {
       ctx.stroke()
       ctx.fillStyle = UI.ink
       ctx.textAlign = 'center'
-      ctx.font = font(current ? 15 : 13, { style: current ? '' : 'italic' })
-      ctx.fillText(s.label, sx, ly + 26)
+      ctx.font = font((current ? 16 : 14) * u, { style: current ? '' : 'italic' })
+      ctx.fillText(s.label, sx, ly + 28 * u)
     })
     // marcador desliza entre estágios
     const stagePos = (() => {
@@ -259,21 +271,18 @@ export default {
     ctx.textAlign = 'center'
     ctx.fillStyle = UI.ink
     ctx.globalAlpha = tp
-    ctx.font = font(Math.max(24, Math.min(40, w * 0.05)))
-    ctx.fillText('Uma nova operária', cx, Math.max(46, cy - lensR * 1.12 - 26))
+    ctx.font = font(Math.max(26, Math.min(42, SA.w * 0.08)))
+    ctx.fillText('Uma nova operária', cx, Math.max(SA.y + 46, cy - lensR * 1.12 - 26))
     const fp = seg(t, T_EMERGE - 0.2, T_EMERGE + 0.8)
     if (factText && fp > 0) {
-      ctx.globalAlpha = fp * 0.75
-      ctx.font = font(14, { style: 'italic' })
-      const lines = wrapText(ctx, factText, Math.min(520, w - 48))
-      const fy = ly + 70
-      lines.forEach((line, i) => ctx.fillText(line, cx, fy + i * 20))
+      ctx.globalAlpha = fp * 0.85
+      ctx.font = font(15.5 * u, { style: 'italic' })
+      const lines = wrapText(ctx, factText, Math.min(520, SA.w - 48))
+      const fy = ly + 70 * u
+      lines.forEach((line, i) => ctx.fillText(line, cx, fy + i * 22 * u))
     }
-    ctx.globalAlpha = 0.4 * seg(t, 1, 2)
-    ctx.textAlign = 'right'
-    ctx.font = font(12, { style: 'italic' })
-    ctx.fillText('clique para pular', w - 20, h - 16)
     ctx.restore()
+    drawHint(ctx, L, isTouchUI(context) ? 'toque para pular' : 'clique ou Enter para pular', seg(t, 1, 2))
 
     fadeScreen(ctx, w, h, (1 - seg(t, 0, 0.5)) * 0.6, UI.paper)
   },

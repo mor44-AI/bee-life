@@ -5,12 +5,17 @@
 //
 // API pública:
 //   default class IndicatorBar
-//     new IndicatorBar({ label, value = 0, radius = 24, duration = 1.1 })
+//     new IndicatorBar({ label, shortLabel, value = 0, radius = 24, duration = 1.1 })
 //     .setValue(v, { immediate = false })  -> anima (tween easeInOutCubic) até v (0–100)
 //     .update(dt)                           -> avança a animação
 //     .value  (valor exibido, animado)  /  .target (valor-alvo)
-//     .draw(ctx, x, y, { radius, time, reveal, labelColor }) -> desenha centrado em (x, y)
+//     .draw(ctx, x, y, { radius, time, reveal, labelColor, labelSize, labelMaxWidth, valueSize })
+//       -> desenha centrado em (x, y)
 //   drawDial(ctx, x, y, radius, value, opts)  -> desenho sem estado (mesmas opções + label)
+//     labelSize (px, padrão max(12, 10·escala)) · labelMaxWidth: se o rótulo não couber,
+//     reduz espaçamento e fonte (até 11px) e, em último caso, usa opts.shortLabel.
+//     valueSize (px, padrão max(12, 11·escala)).
+//   dialFootprint(radius, labelSize) -> altura total (anel + rótulo) abaixo/acima do centro
 //   Primitivas do motivo técnico, reaproveitadas pelos estados de UI:
 //     UI (paleta/tokens), font(size, { weight, style }),
 //     drawScaleArc(ctx, cx, cy, r, a0, a1, opts), drawDottedCircle(ctx, cx, cy, r, opts),
@@ -141,7 +146,7 @@ const valueAngle = (v) => A0 + (A1 - A0) * (clamp(v, 0, 100) / 100)
  * labelColor, showValue = true, compact = false }
  */
 export function drawDial(ctx, x, y, radius, value, opts = {}) {
-  const { label = '', time = 0, reveal = 1, labelColor = UI.ink, showValue = true } = opts
+  const { label = '', shortLabel = '', time = 0, reveal = 1, labelColor = UI.ink, showValue = true, labelMaxWidth = 0 } = opts
   const r = radius
   const v = clamp(value, 0, 100)
   const critical = v < CRITICAL_THRESHOLD
@@ -248,7 +253,7 @@ export function drawDial(ctx, x, y, radius, value, opts = {}) {
     ctx.fillStyle = critical ? UI.critical : UI.ink
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
-    ctx.font = font(Math.max(9, 10 * tickScale), { style: 'italic' })
+    ctx.font = font(opts.valueSize ?? Math.max(12, 11 * tickScale), { style: 'italic' })
     ctx.fillText(String(Math.round(v)), x, y + r * 0.78)
     ctx.restore()
   }
@@ -260,9 +265,22 @@ export function drawDial(ctx, x, y, radius, value, opts = {}) {
     ctx.fillStyle = labelColor
     ctx.textAlign = 'center'
     ctx.textBaseline = 'top'
-    ctx.font = font(Math.max(9, 9.5 * Math.min(1.25, tickScale)))
-    setLetterSpacing(ctx, 1.4)
-    ctx.fillText(label.toUpperCase(), x, y + r + 9)
+    let size = opts.labelSize ?? Math.max(12, 10 * Math.min(1.3, tickScale))
+    let spacing = 1.2
+    let text = label.toUpperCase()
+    ctx.font = font(size)
+    setLetterSpacing(ctx, spacing)
+    if (labelMaxWidth > 0) {
+      const fits = () => ctx.measureText(text).width <= labelMaxWidth
+      while (!fits() && (spacing > 0 || size > 11)) {
+        if (spacing > 0) spacing = Math.max(0, spacing - 0.4)
+        else size -= 0.5
+        ctx.font = font(size)
+        setLetterSpacing(ctx, spacing)
+      }
+      if (!fits() && shortLabel) text = shortLabel.toUpperCase()
+    }
+    ctx.fillText(text, x, y + r + 9)
     setLetterSpacing(ctx, 0)
     ctx.restore()
   }
@@ -270,9 +288,14 @@ export function drawDial(ctx, x, y, radius, value, opts = {}) {
   ctx.restore()
 }
 
+export function dialFootprint(radius, labelSize = 12) {
+  return { above: radius + 7, below: radius + 9 + labelSize * 1.2 }
+}
+
 export default class IndicatorBar {
-  constructor({ label = '', value = 0, radius = 24, duration = 1.1 } = {}) {
+  constructor({ label = '', shortLabel = '', value = 0, radius = 24, duration = 1.1 } = {}) {
     this.label = label
+    this.shortLabel = shortLabel
     this.radius = radius
     this.duration = duration
     this._from = clamp(value, 0, 100)
@@ -316,6 +339,7 @@ export default class IndicatorBar {
     drawDial(ctx, x, y, opts.radius ?? this.radius, this._display, {
       ...opts,
       label: opts.label ?? this.label,
+      shortLabel: opts.shortLabel ?? this.shortLabel,
     })
   }
 }

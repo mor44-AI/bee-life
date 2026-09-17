@@ -1,11 +1,21 @@
 // IntroState — PLACEHOLDER da abertura (a cinemática final de 20–30s é de outra onda).
 // ~4s: sobre o papel naturalista, os elementos de "instrumento técnico" se desenham
 // progressivamente (círculos concêntricos, transferidor, guias pontilhadas, uma
-// célula hexagonal) e o título "Vida de Abelha" surge. Pulável por clique/tecla.
+// célula hexagonal) e o título "Vida de Abelha" surge. Pulável tocando/clicando em
+// qualquer lugar ou por tecla. Composição centrada na área segura (vertical primeiro).
 
 import { ease } from '../engine/tween.js'
 import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
-import { createPaperBackdrop, createKeyWatcher, fadeScreen } from '../ui/HUD.js'
+import {
+  createPaperBackdrop,
+  fadeScreen,
+  screenLayout,
+  safeRect,
+  uiScaleOf,
+  anyKeyPressed,
+  isTouchUI,
+  drawHint,
+} from '../ui/HUD.js'
 import { strokeHandDrawn, polygonPoints } from '../art/textureUtils.js'
 
 const DURATION = 4.2
@@ -13,7 +23,6 @@ const FADE_OUT = 0.6
 const SKIP_KEYS = ['Enter', 'Space', 'Escape', 'NumpadEnter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']
 
 const backdrop = createPaperBackdrop({ seed: 7 })
-let keys = null
 let t = 0
 let leaving = -1
 
@@ -23,14 +32,12 @@ export default {
   enter(context) {
     t = 0
     leaving = -1
-    keys = createKeyWatcher(context.input, SKIP_KEYS)
-    keys.prime()
     context.input.consumeClicks()
   },
 
   update(context, dt) {
     t += dt
-    const skip = context.input.consumeClicks().length > 0 || keys.poll().size > 0
+    const skip = context.input.consumeClicks().length > 0 || anyKeyPressed(context.input, SKIP_KEYS)
     if (skip) {
       context.goTo('menu')
       return
@@ -43,10 +50,17 @@ export default {
     const w = context.width
     const h = context.height
     backdrop.draw(ctx, 0, 0, w, h)
+    const L = screenLayout(context)
+    const S = safeRect(L)
+    const u = uiScaleOf(L)
+    const portrait = S.h > S.w
 
-    const cx = w / 2
-    const cy = h * 0.46
-    const R = Math.min(w, h) * 0.3
+    const titleSize = portrait ? Math.max(34, Math.min(60, S.w * 0.115)) : Math.max(34, Math.min(76, S.w * 0.075))
+    const cx = S.x + S.w / 2
+    // Diagrama + título (≈ R·2.5 + 2·título) centralizados verticalmente.
+    const R = portrait ? Math.min(S.w * 0.34, S.h * 0.2) : Math.min(S.w, S.h) * 0.28
+    const blockH = R * 2.5 + titleSize * 1.9
+    const cy = S.y + Math.max(R * 1.2 + 10, (S.h - blockH) / 2 + R * 1.15)
 
     // Guias pontilhadas horizontais/verticais.
     drawGuideLine(ctx, cx - R * 1.9, cy, cx + R * 1.9, cy, { progress: seg(t, 0.1, 1.4), alpha: 0.25 })
@@ -117,7 +131,6 @@ export default {
 
     // Título.
     const tp = seg(t, 2.0, 3.3)
-    const titleSize = Math.max(34, Math.min(76, w * 0.075))
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
@@ -128,20 +141,13 @@ export default {
     ctx.fillText('Vida de Abelha', cx, cy + R * 1.32 + (1 - tp) * 8)
     setLetterSpacing(ctx, 0)
     const sp = seg(t, 2.8, 3.8)
-    ctx.globalAlpha = sp * 0.75
-    ctx.font = font(Math.max(13, titleSize * 0.26), { style: 'italic' })
+    ctx.globalAlpha = sp * 0.85
+    ctx.font = font(Math.max(14 * u, titleSize * 0.28), { style: 'italic' })
     ctx.fillText('Mandaçaia · Melipona quadrifasciata', cx, cy + R * 1.32 + titleSize * 0.72)
     ctx.restore()
 
     // Dica discreta.
-    ctx.save()
-    ctx.globalAlpha = 0.4 * seg(t, 1.0, 2.0)
-    ctx.fillStyle = UI.ink
-    ctx.textAlign = 'right'
-    ctx.textBaseline = 'bottom'
-    ctx.font = font(12, { style: 'italic' })
-    ctx.fillText('clique para pular', w - 20, h - 16)
-    ctx.restore()
+    drawHint(ctx, L, isTouchUI(context) ? 'toque para pular' : 'clique ou Enter para pular', seg(t, 1.0, 2.0))
 
     if (leaving >= 0) fadeScreen(ctx, w, h, ((t - leaving) / FADE_OUT) * 0.5, UI.paper)
   },

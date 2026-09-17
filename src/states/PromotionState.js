@@ -1,14 +1,26 @@
 // PromotionState — enter(context, { from, to }). Transição celebratória contida:
 // o diagrama técnico da função antiga se apaga e um novo se redesenha, enquanto
 // um ponteiro (acento rosa único) percorre a escala das 5 funções até a nova.
-// Clique/tecla: primeiro adianta a animação; depois -> goTo('hub').
+// Toque/clique em qualquer lugar ou tecla: primeiro adianta a animação; depois
+// -> goTo('hub'). Botão grande "Continuar" na zona do polegar quando pronto.
 
 import { ease } from '../engine/tween.js'
 import { RANK_ORDER } from '../systems/TaskSystem.js'
 import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { polygonPoints, strokeHandDrawn } from '../art/textureUtils.js'
 import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
-import { createPaperBackdrop, createKeyWatcher, wrapText, rankName } from '../ui/HUD.js'
+import {
+  createPaperBackdrop,
+  wrapText,
+  rankName,
+  drawButton,
+  screenLayout,
+  safeRect,
+  uiScaleOf,
+  anyKeyPressed,
+  continueHint,
+  drawHint,
+} from '../ui/HUD.js'
 
 const KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const T_ERASE = 1.0
@@ -26,7 +38,6 @@ const ROLE_NOTES = {
 }
 
 const backdrop = createPaperBackdrop({ seed: 73 })
-let keys = null
 let t = 0
 let from = 'cleaning'
 let to = 'feedLarvae'
@@ -87,15 +98,13 @@ export default {
     t = 0
     to = data.to ?? context.tasks?.currentRank ?? 'cleaning'
     from = data.from ?? RANK_ORDER[Math.max(0, RANK_ORDER.indexOf(to) - 1)]
-    keys = createKeyWatcher(context.input, KEYS)
-    keys.prime()
     context.input.consumeClicks()
   },
 
   update(context, dt) {
     t += dt
-    const pressed = context.input.consumeClicks().length > 0 || keys.poll().size > 0
-    if (!pressed) return
+    const pressed = context.input.consumeClicks().length > 0 || anyKeyPressed(context.input, KEYS)
+    if (!pressed || t < 0.2) return
     if (t < T_READY) t = T_READY
     else context.goTo('hub')
   },
@@ -104,10 +113,17 @@ export default {
     const w = context.width
     const h = context.height
     backdrop.draw(ctx, 0, 0, w, h)
+    const L = screenLayout(context)
+    const S = safeRect(L)
+    const u = uiScaleOf(L)
+    const portrait = S.h >= S.w
 
-    const R = Math.max(70, Math.min(w * 0.26, h * 0.24))
-    const cx = w / 2
-    const cy = h * 0.44
+    const R = portrait ? Math.max(60, Math.min(S.w * 0.22, S.h * 0.14)) : Math.max(60, Math.min(S.w * 0.2, S.h * 0.2))
+    const cx = S.x + S.w / 2
+    const cy = S.y + Math.max(S.h * (portrait ? 0.37 : 0.4), R * 1.3 + 34 * u + 26 * u)
+    const btnH = Math.max(L.minTouch ?? 56, Math.round(60 * u))
+    const btnW = Math.min(360, S.w - 40)
+    const btn = { x: cx - btnW / 2, y: S.y + S.h - btnH - 40 * u, w: btnW, h: btnH }
 
     drawGuideLine(ctx, cx - R * 1.9, cy, cx + R * 1.9, cy, { alpha: 0.16 })
     drawGuideLine(ctx, cx, cy - R * 1.6, cx, cy + R * 1.2, { alpha: 0.12 })
@@ -135,13 +151,15 @@ export default {
     RANK_ORDER.forEach((rank) => {
       const a = angleOf(rank)
       const isTo = rank === to
-      const lx = cx + Math.cos(a) * (PR + 22) * 1.12
-      const ly = cy + Math.sin(a) * (PR + 22)
-      ctx.globalAlpha = isTo ? 0.35 + 0.65 * seg(t, T_NEEDLE1 - 0.3, T_NEEDLE1 + 0.3) : 0.45
+      ctx.globalAlpha = isTo ? 0.45 + 0.55 * seg(t, T_NEEDLE1 - 0.3, T_NEEDLE1 + 0.3) : 0.62
       ctx.fillStyle = UI.ink
-      ctx.font = font(isTo ? 11 : 9.5)
-      setLetterSpacing(ctx, 1.2)
+      ctx.font = font((isTo ? 13 : 11.5) * u)
+      setLetterSpacing(ctx, 1)
       const short = rank === 'feedQueen' ? 'ATENDENTE' : rankName(rank).toUpperCase()
+      // Rótulos nunca saem da área segura (tela estreita).
+      const half = ctx.measureText(short).width / 2
+      const lx = Math.max(S.x + 8 + half, Math.min(S.x + S.w - 8 - half, cx + Math.cos(a) * (PR + 22) * 1.12))
+      const ly = cy + Math.sin(a) * (PR + 18 * u)
       ctx.fillText(short, lx, ly)
       setLetterSpacing(ctx, 0)
     })
@@ -174,29 +192,41 @@ export default {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'alphabetic'
     ctx.fillStyle = UI.ink
-    ctx.globalAlpha = 0.65 * seg(t, T_NAME - 0.5, T_NAME + 0.3)
-    ctx.font = font(11)
+    ctx.globalAlpha = 0.75 * seg(t, T_NAME - 0.5, T_NAME + 0.3)
+    ctx.font = font(12.5 * u)
     setLetterSpacing(ctx, 3)
-    ctx.fillText('NOVA FUNÇÃO', cx, baseY + 22)
+    ctx.fillText('NOVA FUNÇÃO', cx, baseY + 22 * u)
     setLetterSpacing(ctx, 0)
     const np2 = seg(t, T_NAME, T_NAME + 0.8)
     ctx.globalAlpha = np2
-    const nameSize = Math.max(28, Math.min(52, w * 0.06))
+    let nameSize = Math.max(28, Math.min(52, S.w * (portrait ? 0.1 : 0.06)))
     ctx.font = font(nameSize)
-    ctx.fillText(rankName(to), cx, baseY + 22 + nameSize * 1.1 + (1 - np2) * 6)
+    while (nameSize > 22 && ctx.measureText(rankName(to)).width > S.w - 32) {
+      nameSize -= 1
+      ctx.font = font(nameSize)
+    }
+    const nameY = baseY + 22 * u + nameSize * 1.1
+    ctx.fillText(rankName(to), cx, nameY + (1 - np2) * 6)
     const note = ROLE_NOTES[to]
     if (note) {
-      ctx.globalAlpha = 0.75 * seg(t, T_NAME + 0.5, T_NAME + 1.2)
-      ctx.font = font(15, { style: 'italic' })
-      wrapText(ctx, note, Math.min(520, w - 48)).forEach((line, i) => {
-        ctx.fillText(line, cx, baseY + 22 + nameSize * 1.1 + 30 + i * 21)
-      })
+      ctx.globalAlpha = 0.88 * seg(t, T_NAME + 0.5, T_NAME + 1.2)
+      ctx.font = font(16 * u, { style: 'italic' })
+      const lh = 22 * u
+      const maxLines = Math.max(1, Math.floor((btn.y - 12 * u - (nameY + 30 * u)) / lh) + 1)
+      wrapText(ctx, note, Math.min(520, S.w - 48))
+        .slice(0, maxLines)
+        .forEach((line, i) => ctx.fillText(line, cx, nameY + 30 * u + i * lh))
     }
-    ctx.globalAlpha = 0.45 * seg(t, T_READY - 0.2, T_READY + 0.6)
-    ctx.font = font(12, { style: 'italic' })
-    ctx.textAlign = 'right'
-    ctx.fillText('clique para continuar', w - 20, h - 16)
     ctx.restore()
+
+    const ready = seg(t, T_READY - 0.2, T_READY + 0.6)
+    if (ready > 0) {
+      ctx.save()
+      ctx.globalAlpha = ready
+      drawButton(ctx, btn, 'Continuar', { focused: true, time: t, accent: false })
+      ctx.restore()
+      drawHint(ctx, L, continueHint(context), ready)
+    }
   },
 
   exit() {},

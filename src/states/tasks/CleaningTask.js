@@ -2,17 +2,28 @@
 //
 // A operária jovem recolhe detritos (cria morta, restos de cera) do favo e os
 // leva até a entrada, desviando do trânsito das companheiras (colidir carregando
-// = derrubar a carga). Larvas de traça-de-cera surgem em células, fogem de forma
-// errática e roem o favo enquanto vivas (dano visível e crescente).
+// = pode derrubar a carga). Larvas de traça-de-cera surgem em células, fogem de
+// forma errática e roem o favo enquanto vivas (dano visível e crescente).
 //
-// Controles: mover = WASD/setas ou segurar o ponteiro (a abelha segue).
-//            Ação (Espaço / toque rápido) = sem carga: investida curta em direção
-//            ao alvo mais próximo; com carga: largar o detrito.
-//            Pegar detrito / capturar larva = encostar.
+// Controles (via context.controls — celular e PC):
+//   mover   = arrastar o dedo/mouse (a abelha segue) ou WASD/setas.
+//   Ação    = botão AÇÃO / Espaço: sem carga = investida curta rumo ao alvo mais
+//             próximo; com carga = largar o detrito. Tocar numa traça = investida nela.
+//   Especial "Resina" = botão / E / Shift: onda de resina que embalsama as traças
+//             (imóveis e sem roer o favo por ~6 s).
+//   Pegar detrito / capturar larva = encostar.
+//
+// Mundo em coordenadas CANÔNICAS (entrada à esquerda, favo se estendendo para a
+// direita). No retrato (design principal) o mundo é girado 90° para caber em
+// context.layout.playfield com a entrada no topo; em paisagem fica centralizado.
+//
+// Dificuldade: data.difficulty (0–1) é a fonte da verdade entre turnos; dentro do
+// turno usa inShiftRamp (primeiros ~10 s tranquilos).
 
 import { create as createMovement } from '../../engine/MovementController.js'
 import { create as createSpawner } from '../../engine/PatternSpawner.js'
 import { create as createGauge } from '../../engine/Gauge.js'
+import { create as createMeter } from '../../engine/SpecialMeter.js'
 import { ease } from '../../engine/tween.js'
 import { createFlightPose, createCarryingPose, drawBeeBody } from '../../art/bee.js'
 import { drawHiveInterior, drawComb } from '../../art/hive.js'
@@ -29,11 +40,16 @@ import {
   INK_LINE,
 } from '../../art/textureUtils.js'
 import { styleGuide } from '../../data/styleGuide.js'
+import { difficultyFor, inShiftRamp } from '../../data/config.js'
 
 const PAL = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
-const SHIFT_DURATION = 70
+const SHIFT_DURATION = 60
 const END_FADE = 1.5
+const RESIN_DURATION = 6
+const WAVE_EXPAND = 0.9
+const WAVE_LIFE = 1.7
+const DASH_CD = 0.65
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 const rand = (a, b) => a + Math.random() * (b - a)
@@ -63,20 +79,79 @@ function dprNow() {
 }
 
 // ---------------------------------------------------------------------------
-// Layout (depende do tamanho da tela)
+// Vista: playfield (tela) <-> mundo canônico
+// ---------------------------------------------------------------------------
+
+function computeView(context) {
+  const lay = context.layout
+  const pf = { ...lay.playfield }
+  const portrait = lay.orientation === 'portrait'
+  // Garante que nenhum botão virtual cubra o mundo (por padrão eles já ficam fora).
+  const buttons = context.controls?.getButtons ? context.controls.getButtons(lay) : []
+  for (const b of buttons) {
+    const inX = b.x + b.r > pf.x && b.x - b.r < pf.x + pf.w
+    const inY = b.y + b.r > pf.y && b.y - b.r < pf.y + pf.h
+    if (!inX || !inY) continue
+    if (portrait) {
+      const h = b.y - b.r - 6 - pf.y
+      if (h > pf.h * 0.6) pf.h = h
+    } else {
+      const w = b.x - b.r - 6 - pf.x
+      if (w > pf.w * 0.6) pf.w = w
+    }
+  }
+  const Wc = portrait ? pf.h : pf.w
+  const Hc = portrait ? pf.w : pf.h
+  return {
+    portrait,
+    pf,
+    Wc,
+    Hc,
+    rot: portrait ? Math.PI / 2 : 0,
+    key: `${lay.width}x${lay.height}|${pf.x},${pf.y},${pf.w},${pf.h}|${portrait}`,
+    screenW: lay.width,
+    screenH: lay.height,
+  }
+}
+
+function applyView(ctx) {
+  const v = st.view
+  if (v.portrait) {
+    ctx.translate(v.pf.x + v.pf.w, v.pf.y)
+    ctx.rotate(Math.PI / 2)
+  } else {
+    ctx.translate(v.pf.x, v.pf.y)
+  }
+}
+
+function toCanon(sx, sy) {
+  const v = st.view
+  return v.portrait ? { x: sy - v.pf.y, y: v.pf.x + v.pf.w - sx } : { x: sx - v.pf.x, y: sy - v.pf.y }
+}
+
+function toScreen(x, y) {
+  const v = st.view
+  return v.portrait ? { x: v.pf.x + v.pf.w - y, y: v.pf.y + x } : { x: v.pf.x + x, y: v.pf.y + y }
+}
+
+function vecToCanon(vx, vy) {
+  return st.view.portrait ? { x: vy, y: -vx } : { x: vx, y: vy }
+}
+
+// ---------------------------------------------------------------------------
+// Layout canônico
 // ---------------------------------------------------------------------------
 
 function buildLayout(W, H) {
-  const S = clamp(Math.min(W, H) / 720, 0.7, 1.7)
+  const S = clamp(Math.min(W, H) / 600, 0.6, 1.6)
   const disc = { cx: W * 0.545, cy: H * 0.5, rx: W * 0.455, ry: H * 0.46 }
   const entrance = { x: Math.max(26 * S, W * 0.032), y: H * 0.5 }
   return {
     W, H, S,
-    HS: clamp(S, 0.8, 1.3),
     disc,
     entrance,
-    deliverRadius: 62 * S,
-    bounds: { x: 14 * S, y: 18 * S, width: W - 28 * S, height: H - 36 * S },
+    margin: Math.round(90 * S),
+    bounds: { x: 14 * S, y: 16 * S, width: W - 28 * S, height: H - 32 * S },
     loops: buildLoops(W, H, disc),
     lanes: buildLanes(W, H, entrance, S),
   }
@@ -135,21 +210,23 @@ function buildLanes(W, H, E, S) {
   ]
 }
 
-function insideDisc(L, x, y, k = 1) {
-  const nx = (x - L.disc.cx) / (L.disc.rx * k)
-  const ny = (y - L.disc.cy) / (L.disc.ry * k)
-  return nx * nx + ny * ny <= 1
-}
-
 // ---------------------------------------------------------------------------
 // Camadas estáticas (pré-renderizadas)
 // ---------------------------------------------------------------------------
 
-function buildBackground(L, dpr) {
-  const { W, H, S, disc, entrance: E } = L
+// Fundo da tela inteira (vaza para HUD/controles), em coordenadas de tela.
+function buildBackdrop(W, H, dpr) {
   const { canvas, g } = makeCanvas(W, H, dpr)
-
   drawHiveInterior(g, { width: W, height: H, backgroundSeed: 31, combs: [] })
+  return canvas
+}
+
+// Favo + invólucro + entrada, em coordenadas canônicas com margem M em volta
+// (o invólucro se dissolve no fundo em vez de ser cortado na borda do playfield).
+function buildBackground(L, dpr) {
+  const { W, H, S, disc, entrance: E, margin: M } = L
+  const { canvas, g } = makeCanvas(W + M * 2, H + M * 2, dpr)
+  g.translate(M, M)
 
   // Invólucro: lâminas de cerume concêntricas em volta do disco de cria.
   for (let i = 6; i >= 1; i--) {
@@ -191,23 +268,23 @@ function buildBackground(L, dpr) {
   })
   // Lavagem escura para as criaturas "saltarem" do fundo + vinheta nas bordas do disco.
   g.fillStyle = 'rgba(36, 26, 16, 0.42)'
-  g.fillRect(0, 0, W, H)
+  g.fillRect(-M, -M, W + M * 2, H + M * 2)
   const vg = g.createRadialGradient(disc.cx, disc.cy, Math.min(disc.rx, disc.ry) * 0.45, disc.cx, disc.cy, Math.max(disc.rx, disc.ry))
   vg.addColorStop(0, 'rgba(26, 18, 8, 0)')
   vg.addColorStop(1, 'rgba(26, 18, 8, 0.5)')
   g.fillStyle = vg
-  g.fillRect(0, 0, W, H)
+  g.fillRect(-M, -M, W + M * 2, H + M * 2)
   g.restore()
   strokeHandDrawn(g, discPts, { color: INK_LINE, baseWidth: 2.2, widthJitter: 0.6, closed: true, seed: 12, opacity: 0.85 })
 
   // Túnel da entrada atravessando o invólucro.
   g.save()
-  const tunnel = g.createLinearGradient(0, 0, disc.cx - disc.rx + 30 * S, 0)
+  const tunnel = g.createLinearGradient(-M, 0, disc.cx - disc.rx + 30 * S, 0)
   tunnel.addColorStop(0, 'rgba(20, 14, 6, 0.85)')
   tunnel.addColorStop(1, 'rgba(20, 14, 6, 0)')
   g.fillStyle = tunnel
   g.beginPath()
-  g.ellipse(E.x + 30 * S, E.y, 90 * S, 70 * S, 0, 0, TAU)
+  g.ellipse(E.x + 20 * S, E.y, 100 * S, 70 * S, 0, 0, TAU)
   g.fill()
   g.restore()
 
@@ -331,19 +408,22 @@ function buildDebrisSprite(type, seed, S, dpr) {
   return { canvas, box }
 }
 
-function rebuildLayers(W, H) {
+function rebuildLayers(context) {
   const dpr = dprNow()
-  const L = buildLayout(W, H)
+  st.view = computeView(context)
+  const L = buildLayout(st.view.Wc, st.view.Hc)
   st.L = L
   st.dpr = dpr
+  st.backdrop = buildBackdrop(st.view.screenW, st.view.screenH, dpr)
   st.bg = buildBackground(L, dpr)
   st.beeSprites = buildBeeSprites(1.45 * L.S, dpr)
-  const dmg = makeCanvas(W, H, dpr)
+  const dmg = makeCanvas(L.W, L.H, dpr)
   st.damageCanvas = dmg.canvas
   st.damageCtx = dmg.g
   for (const m of st.marks) paintMark(m)
   for (const d of st.debris) d.sprite = buildDebrisSprite(d.type, d.seed, L.S, dpr)
-  st.iconDebris = buildDebrisSprite('brood', 5, L.HS * 0.8, dpr)
+  const u = clamp(context.layout.uiScale || 1, 0.85, 1.3)
+  st.iconDebris = buildDebrisSprite('brood', 5, 0.62 * u, dpr)
 }
 
 // ---------------------------------------------------------------------------
@@ -395,23 +475,40 @@ function paintMark(m) {
 }
 
 // ---------------------------------------------------------------------------
-// Dificuldade
+// Dificuldade — tudo deriva de st.D (data.difficulty) + rampa dentro do turno.
 // ---------------------------------------------------------------------------
 
 function difficulty() {
-  const p = clamp(st.time / SHIFT_DURATION, 0, 1)
-  const d = Math.min(st.shiftIndex, 6)
+  const D = st.D
+  const r = inShiftRamp(st.time, SHIFT_DURATION)
+  // Intensidade efetiva: começa em 60% de D e chega a D no fim do turno.
+  const e = clamp(D * (0.6 + 0.4 * r), 0, 1)
   return {
-    p,
-    larvaInterval: Math.max(2.4, (9 - 4.8 * p) * (1 - 0.09 * d)),
-    maxLarvae: 2 + Math.floor(p * 2.5) + Math.min(d, 3),
-    patrollers: 3 + Math.floor(p * 4) + Math.min(d, 4),
-    patrolSpeed: 95 * (1 + 0.08 * d),
-    foragerRate: (0.16 + 0.28 * p) * (1 + 0.15 * d),
-    foragerSpeed: 150 * (1 + 0.06 * d),
-    fleeSpeed: 1 + 0.07 * d,
-    damageRate: 0.3 * (1 + 0.1 * d),
+    D, r, e,
+    patrollers: 1 + Math.round(6 * e),
+    patrolSpeed: 60 + 50 * e,
+    foragerRate: 0.04 + 0.34 * e,
+    foragerSpeed: 105 + 60 * e,
+    larvaInterval: 14 - 10 * e,
+    maxLarvae: 1 + Math.round(3 * e),
+    fleeSpeed: 0.5 + 0.6 * e, // × velocidade da jogadora
+    fleeR: 110 + 70 * e,
+    wanderSpeed: 32 + 28 * e,
+    damageRate: 0.12 + 0.4 * e, // % do medidor por segundo, por traça ativa
+    dropChance: 0.12 + 0.6 * e,
+    hitR: 21 + 8 * e,
+    carryBrood: 0.86 - 0.32 * e,
+    carryWax: 0.92 - 0.24 * e,
+    accelBrood: 7.5 - 4.3 * e,
+    accelWax: 8.5 - 4.3 * e,
+    deliverR: 62 + 34 * (1 - D),
+    capR: 28 + 10 * (1 - D),
   }
+}
+
+function deliverTarget() {
+  // Carregar fica mais pesado com a dificuldade, então a meta cai um pouco.
+  return Math.round(15 - 3 * st.D)
 }
 
 // ---------------------------------------------------------------------------
@@ -436,7 +533,7 @@ function randomDiscPoint(minX, avoidR, k = 0.86) {
 
 function spawnDebris() {
   const L = st.L
-  const pos = randomDiscPoint(L.W * 0.32, 160 * L.S)
+  const pos = randomDiscPoint(L.W * 0.32, 140 * L.S)
   const type = Math.random() < 0.55 ? 'brood' : 'wax'
   const seed = 1 + Math.floor(Math.random() * 9999)
   st.debris.push({
@@ -448,16 +545,19 @@ function spawnDebris() {
 
 function spawnLarvaWarning() {
   const L = st.L
-  const pos = randomDiscPoint(L.W * 0.22, 230 * L.S, 0.8)
-  st.warnings.push({ x: pos.x, y: pos.y, t: 0, dur: 1.1 })
+  const pos = randomDiscPoint(L.W * 0.22, 200 * L.S, 0.8)
+  st.warnings.push({ x: pos.x, y: pos.y, t: 0, dur: 1.3 - 0.3 * st.D })
+}
+
+function larvaBounds() {
+  const r = st.L.disc
+  return { x: r.cx - r.rx * 0.93, y: r.cy - r.ry * 0.93, width: r.rx * 1.86, height: r.ry * 1.86 }
 }
 
 function spawnLarva(x, y) {
-  const r = st.L.disc
   // Um spawner 'erratic' por larva: o PatternSpawner lê `fleeFrom` por
   // referência, então mutamos esse objeto a cada frame (fuga do jogador /
   // passeio). speed = 1 e update(dt * velocidade) permite variar a velocidade.
-  // Não há API de spawn manual (spawnRate 0), então a entidade é inserida direto.
   const flee = { x, y }
   const spawner = createSpawner({
     pattern: 'erratic',
@@ -465,15 +565,22 @@ function spawnLarva(x, y) {
     speed: 1,
     spawnPoint: { x, y },
     fleeFrom: flee,
-    bounds: { x: r.cx - r.rx * 0.93, y: r.cy - r.ry * 0.93, width: r.rx * 1.86, height: r.ry * 1.86 },
+    bounds: larvaBounds(),
     maxEntities: 1,
   })
-  spawner.entities.push({ id: `larva-${st.larvaCounter++}`, x, y, _pathIndex: 0, _done: false })
-  st.larvae.push({
+  spawner.spawn({ x, y })
+  const lv = {
     spawner, flee, home: { x, y }, target: { x, y }, wanderT: 0,
     dx: x, dy: y, heading: rand(0, TAU), anim: rand(0, 10), markX: x, markY: y,
     dodgeT: 0, dodgeSide: 1, seed: 1 + Math.floor(Math.random() * 999), age: 0, fleeing: false,
-  })
+    resined: false, resinAt: 0,
+  }
+  // Nascida com a resina já espalhada: embalsamada na hora.
+  if (st.meter.isActive && (!st.wave || st.wave.t >= WAVE_EXPAND)) {
+    lv.resined = true
+    lv.resinAt = st.time
+  }
+  st.larvae.push(lv)
   st.pestsSpawned++
 }
 
@@ -485,7 +592,7 @@ function addPatroller() {
   let s = rand(0, loop.length)
   for (let i = 0; i < 12; i++) {
     const p = loopPoint(loop, s)
-    if (dist(p.x, p.y, pl.x, pl.y) > 220 * L.S) break
+    if (dist(p.x, p.y, pl.x, pl.y) > 200 * L.S) break
     s += loop.length / 12
   }
   const p = loopPoint(loop, s)
@@ -501,7 +608,6 @@ function buildForagerSpawners() {
   st.foragers = L.lanes.map((path, i) => {
     const sp = createSpawner({ pattern: 'file', spawnRate: dif.foragerRate, path, speed: dif.foragerSpeed * L.S, maxEntities: 6 })
     sp._timeSinceSpawn = i === 0 ? 2.5 : 0
-    sp.__speed = dif.foragerSpeed
     return sp
   })
 }
@@ -529,9 +635,9 @@ function dropCarried(dirX, dirY, forced) {
   if (!d) return
   const pl = st.mover.position
   const len = Math.hypot(dirX, dirY) || 1
-  const reach = (forced ? rand(55, 85) : 34) * L.S
-  let tx = pl.x + (dirX / len) * reach + (forced ? rand(-18, 18) * L.S : 0)
-  let ty = pl.y + (dirY / len) * reach + (forced ? rand(-18, 18) * L.S : 0)
+  const reach = (forced ? rand(45, 70) : 34) * L.S
+  let tx = pl.x + (dirX / len) * reach + (forced ? rand(-14, 14) * L.S : 0)
+  let ty = pl.y + (dirY / len) * reach + (forced ? rand(-14, 14) * L.S : 0)
   tx = clamp(tx, L.bounds.x + 10, L.bounds.x + L.bounds.width - 10)
   ty = clamp(ty, L.bounds.y + 10, L.bounds.y + L.bounds.height - 10)
   const from = st.carryPoint()
@@ -546,13 +652,23 @@ function dropCarried(dirX, dirY, forced) {
   }
 }
 
-function doAction(tap) {
+function dash(dx, dy) {
+  const L = st.L
+  const pl = st.mover.position
+  const len = Math.hypot(dx, dy) || 1
+  const power = 560 * L.S
+  st.impX += (dx / len) * power
+  st.impY += (dy / len) * power
+  st.dashCd = DASH_CD
+  st.dashT = 0.22
+  fx('dash', pl.x, pl.y, { dur: 0.45, ang: Math.atan2(dy, dx) })
+}
+
+function doAction() {
   const L = st.L
   const pl = st.mover.position
   if (st.carrying) {
-    if (!tap || dist(tap.x, tap.y, pl.x, pl.y) < 70 * L.S) {
-      dropCarried(Math.cos(st.heading), Math.sin(st.heading), false)
-    }
+    dropCarried(Math.cos(st.heading), Math.sin(st.heading), false)
     return
   }
   if (st.dashCd > 0) return
@@ -572,17 +688,41 @@ function doAction(tap) {
       if (dd < bestD) { bestD = dd; best = d }
     }
   }
-  let dx, dy
-  if (best) { dx = best.x - pl.x; dy = best.y - pl.y }
-  else if (tap) { dx = tap.x - pl.x; dy = tap.y - pl.y }
-  else { dx = Math.cos(st.heading); dy = Math.sin(st.heading) }
-  const len = Math.hypot(dx, dy) || 1
-  const power = 560 * L.S
-  st.impX += (dx / len) * power
-  st.impY += (dy / len) * power
-  st.dashCd = 0.65
-  st.dashT = 0.22
-  fx('dash', pl.x, pl.y, { dur: 0.45, ang: Math.atan2(dy, dx) })
+  if (best) dash(best.x - pl.x, best.y - pl.y)
+  else dash(Math.cos(st.heading), Math.sin(st.heading))
+}
+
+// Toque/clique curto em cima de uma traça: investida direto nela.
+function doTapOnLarva(tap) {
+  if (st.carrying || st.dashCd > 0) return
+  const L = st.L
+  const pl = st.mover.position
+  const c = toCanon(tap.x, tap.y)
+  let best = null
+  let bestD = 48 * L.S
+  for (const lv of st.larvae) {
+    const e = lv.spawner.entities[0]
+    if (!e) continue
+    const dd = dist(e.x, e.y, c.x, c.y)
+    if (dd < bestD) { bestD = dd; best = e }
+  }
+  if (best && dist(best.x, best.y, pl.x, pl.y) < 260 * L.S) dash(best.x - pl.x, best.y - pl.y)
+}
+
+function activateResin() {
+  if (!st.meter.activate()) return
+  const pl = st.mover.position
+  st.wave = { x: pl.x, y: pl.y, t: 0 }
+  st.resinUses++
+  st.hitStop = 0.06
+  shake(3 * st.L.S, 0.2)
+}
+
+function waveRadius() {
+  if (!st.wave) return 0
+  const L = st.L
+  const maxR = Math.hypot(L.W, L.H) * 1.05
+  return maxR * ease(clamp(st.wave.t / WAVE_EXPAND, 0, 1), 'easeOutCubic')
 }
 
 // ---------------------------------------------------------------------------
@@ -593,10 +733,11 @@ export default {
   id: 'cleaning',
 
   enter(context, data = {}) {
-    const W = context.width
-    const H = context.height
+    const shiftIndex = Math.max(0, data?.shiftIndex ?? 0)
+    const D = Number.isFinite(data?.difficulty) ? clamp(data.difficulty, 0, 1) : difficultyFor('cleaning', shiftIndex, [])
     st = {
-      shiftIndex: Math.max(0, data?.shiftIndex ?? 0),
+      shiftIndex,
+      D,
       time: 0,
       finished: false,
       endT: 0,
@@ -612,8 +753,10 @@ export default {
       captured: 0,
       drops: 0,
       pestsSpawned: 0,
-      larvaCounter: 0,
-      nextLarva: 5.5,
+      resinUses: 0,
+      resinCaptures: 0,
+      captureValue: 0,
+      nextLarva: 6 + 6 * (1 - D),
       nextDebris: 4,
       heading: 0,
       velX: 0,
@@ -627,56 +770,76 @@ export default {
       hitStop: 0,
       shakeT: 0,
       shakeMag: 0,
-      prevSpace: false,
+      pendingAction: false,
+      pendingSpecial: false,
       pendingTap: null,
       lastDmgStep: 0,
       dmgPulse: 0,
       tallyPulse: 0,
       capturePulse: 0,
-      size: { W, H },
+      wave: null,
+      viewKey: '',
     }
     st.gauge = createGauge({ rate: 0, max: 100, min: 0, thresholds: { restless: 0.25, critical: 0.5 } })
-    rebuildLayers(W, H)
+    st.meter = createMeter({ chargeTime: 50, duration: RESIN_DURATION })
+    context.controls.configure({
+      showAction: true,
+      showSpecial: true,
+      showDirections: false,
+      meter: st.meter,
+      actionLabel: 'AÇÃO',
+      specialLabel: 'RESINA',
+    })
+    rebuildLayers(context)
+    st.viewKey = st.view.key
     const L = st.L
-    st.mover = createMovement({ bounds: L.bounds, speed: 250 * L.S })
-    st.mover.setPosition(L.entrance.x + 140 * L.S, L.entrance.y + 40 * L.S)
+    st.mover = createMovement({ bounds: L.bounds, speed: 260 * L.S })
+    st.mover.setPosition(L.entrance.x + 120 * L.S, L.entrance.y + 30 * L.S)
     st.carryPoint = () => {
       const pl = st.mover.position
       const sc = 1.5 * st.L.S
-      const flip = Math.cos(st.heading) < 0 ? -1 : 1
+      const flip = Math.cos(st.heading + st.view.rot) < 0 ? -1 : 1
       const lx = 17 * sc
       const ly = 5 * sc * flip
       const c = Math.cos(st.heading), s = Math.sin(st.heading)
       return { x: pl.x + lx * c - ly * s, y: pl.y + lx * s + ly * c }
     }
     for (let i = 0; i < 3; i++) spawnDebris()
-    for (let i = 0; i < 3; i++) addPatroller()
+    const dif = difficulty()
+    for (let i = 0; i < dif.patrollers; i++) addPatroller()
     for (const p of st.patrollers) p.fade = 1
     buildForagerSpawners()
-    context.input.consumeClicks()
   },
 
   update(context, dt) {
     if (!st || st.finished) return
-    const input = context.input
+    const controls = context.controls
 
-    // Redimensionamento: refaz camadas e reescala posições.
-    if (context.width !== st.size.W || context.height !== st.size.H) {
-      const kx = context.width / st.size.W
-      const ky = context.height / st.size.H
-      st.size = { W: context.width, H: context.height }
-      rebuildLayers(context.width, context.height)
+    // Redimensionamento / rotação: refaz camadas e reescala posições.
+    const nv = computeView(context)
+    if (nv.key !== st.viewKey) {
+      const kx = nv.Wc / st.L.W
+      const ky = nv.Hc / st.L.H
+      st.viewKey = nv.key
+      rebuildLayers(context)
       const L = st.L
       const pl = st.mover.position
-      st.mover = createMovement({ bounds: L.bounds, speed: 250 * L.S })
+      st.mover = createMovement({ bounds: L.bounds, speed: 260 * L.S })
       st.mover.setPosition(pl.x * kx, pl.y * ky)
       for (const d of st.debris) { d.x *= kx; d.y *= ky; d.anim = null; if (d.state === 'air') d.state = 'floor' }
+      for (const d of st.debris) if (d.state === 'delivering') d.state = 'out'
       for (const lv of st.larvae) {
         const e = lv.spawner.entities[0]
         if (e) { e.x *= kx; e.y *= ky }
         lv.dx *= kx; lv.dy *= ky; lv.markX *= kx; lv.markY *= ky; lv.home.x *= kx; lv.home.y *= ky
+        lv.target.x *= kx; lv.target.y *= ky
+        lv.spawner = Object.assign(createSpawner({
+          pattern: 'erratic', spawnRate: 0, speed: 1, spawnPoint: { x: lv.dx, y: lv.dy }, fleeFrom: lv.flee, bounds: larvaBounds(), maxEntities: 1,
+        }), {})
+        if (e) lv.spawner.spawn({ x: e.x, y: e.y })
       }
       for (const w of st.warnings) { w.x *= kx; w.y *= ky }
+      if (st.wave) { st.wave.x *= kx; st.wave.y *= ky }
       st.fx = []
       buildForagerSpawners()
     }
@@ -691,32 +854,15 @@ export default {
       st.fx = st.fx.filter((f) => f.t < f.dur)
       if (st.endT >= END_FADE) {
         st.finished = true
-        const result = computeResult()
-        context.finishShift(result)
+        context.finishShift(computeResult())
       }
       return
     }
 
-    // Input de ação (Espaço com detecção de borda; toque/clique curto).
-    const space = input.isKeyDown('Space')
-    let actionTap = null
-    let actionKey = space && !st.prevSpace
-    st.prevSpace = space
-    const clicks = input.consumeClicks()
-    const pointer = input.getPointer()
-    if (clicks.length) {
-      const c = clicks[clicks.length - 1]
-      st.pendingTap = { x: c.x, y: c.y, t: st.time }
-    }
-    if (st.pendingTap) {
-      const age = st.time - st.pendingTap.t
-      if (!input.isPointerDown()) {
-        if (age < 0.28) actionTap = { x: st.pendingTap.x, y: st.pendingTap.y }
-        st.pendingTap = null
-      } else if (age >= 0.28) {
-        st.pendingTap = null
-      }
-    }
+    // Bordas de entrada: guardadas para não se perderem durante o hit-stop.
+    if (controls.actionPressed) st.pendingAction = true
+    if (controls.specialPressed) st.pendingSpecial = true
+    if (controls.pointerTap) st.pendingTap = controls.pointerTap
 
     // Timers que correm mesmo durante hit-stop.
     st.fx.forEach((f) => { f.t += dt })
@@ -734,33 +880,62 @@ export default {
     st.time += dt
     const dif = difficulty()
 
-    if (actionKey) doAction(null)
-    else if (actionTap) doAction(actionTap)
+    // ---- Especial: Resina ----
+    st.meter.update(dt)
+    if (st.meter.justEnded) {
+      for (const lv of st.larvae) lv.resined = false
+    }
+    if (st.pendingSpecial) {
+      st.pendingSpecial = false
+      activateResin()
+    }
+    if (st.wave) {
+      st.wave.t += dt
+      const R = waveRadius()
+      if (st.meter.isActive) {
+        for (const lv of st.larvae) {
+          if (!lv.resined && dist(lv.dx, lv.dy, st.wave.x, st.wave.y) <= R) {
+            lv.resined = true
+            lv.resinAt = st.time
+            fx('resin', lv.dx, lv.dy, { dur: 0.7 })
+          }
+        }
+      }
+      if (st.wave.t >= WAVE_LIFE) st.wave = null
+    }
+
+    if (st.pendingAction) {
+      st.pendingAction = false
+      doAction()
+    }
+    if (st.pendingTap) {
+      doTapOnLarva(st.pendingTap)
+      st.pendingTap = null
+    }
 
     // ---- Movimento do jogador ----
     let ix = 0
     let iy = 0
-    if (input.isKeyDown('KeyA') || input.isKeyDown('ArrowLeft')) ix -= 1
-    if (input.isKeyDown('KeyD') || input.isKeyDown('ArrowRight')) ix += 1
-    if (input.isKeyDown('KeyW') || input.isKeyDown('ArrowUp')) iy -= 1
-    if (input.isKeyDown('KeyS') || input.isKeyDown('ArrowDown')) iy += 1
     const pl0 = st.mover.position
-    if (ix === 0 && iy === 0 && input.isPointerDown()) {
-      const dx = pointer.x - pl0.x
-      const dy = pointer.y - pl0.y
+    const mv = controls.move
+    if (mv && mv.vx != null) {
+      const v = vecToCanon(mv.vx, mv.vy)
+      ix = v.x
+      iy = v.y
+    } else if (mv && mv.targetX != null) {
+      const tgt = toCanon(mv.targetX, mv.targetY)
+      const dx = tgt.x - pl0.x
+      const dy = tgt.y - pl0.y
       const dd = Math.hypot(dx, dy)
-      if (dd > 6 * S) {
-        const m = Math.min(1, dd / (70 * S))
+      if (dd > 5 * S) {
+        const m = Math.min(1, dd / (60 * S))
         ix = (dx / dd) * m
         iy = (dy / dd) * m
       }
-    } else {
-      const m = Math.hypot(ix, iy)
-      if (m > 1) { ix /= m; iy /= m }
     }
     const carry = st.carrying
-    const speedMul = carry ? (carry.type === 'brood' ? 0.56 : 0.68) : 1
-    const accel = carry ? (carry.type === 'brood' ? 3.2 : 4.2) : 11
+    const speedMul = carry ? (carry.type === 'brood' ? dif.carryBrood : dif.carryWax) : 1
+    const accel = carry ? (carry.type === 'brood' ? dif.accelBrood : dif.accelWax) : 11
     const stunK = st.stun > 0 ? 0.35 : 1
     st.velX += (ix * stunK - st.velX) * expLerp(accel, dt)
     st.velY += (iy * stunK - st.velY) * expLerp(accel, dt)
@@ -784,8 +959,8 @@ export default {
     st.dashT = Math.max(0, st.dashT - dt)
 
     const pl = st.mover.position
-    const mvX = st.velX * speedMul + st.impX / (250 * S)
-    const mvY = st.velY * speedMul + st.impY / (250 * S)
+    const mvX = st.velX * speedMul + st.impX / (260 * S)
+    const mvY = st.velY * speedMul + st.impY / (260 * S)
     if (Math.hypot(mvX, mvY) > 0.08) {
       st.heading = angleLerp(st.heading, Math.atan2(mvY, mvX), expLerp(carry ? 5 : 12, dt))
     }
@@ -809,10 +984,10 @@ export default {
     }
 
     // ---- Trânsito: forrageiras entrando/saindo pela entrada ----
-    if (st.foragers.length && Math.abs(st.foragers[0].__speed - dif.foragerSpeed) > 8) buildForagerSpawners()
     for (const sp of st.foragers) {
       sp.spawnRate = dif.foragerRate
       for (const e of sp.entities) {
+        e.speed = dif.foragerSpeed * S
         e._px = e._px ?? e.x
         e._py = e._py ?? e.y
       }
@@ -832,24 +1007,25 @@ export default {
 
     // ---- Colisões com o trânsito ----
     if (st.invuln <= 0) {
-      const hitR = 31 * S
+      const hitR = dif.hitR * S
       const check = (bx, by, bee) => {
         const d = dist(bx, by, pl.x, pl.y)
         if (d >= hitR) return false
         const nx = (pl.x - bx) / (d || 1)
         const ny = (pl.y - by) / (d || 1)
         const hadCargo = !!st.carrying
-        st.impX = nx * 330 * S
-        st.impY = ny * 330 * S
-        st.velX *= 0.2
-        st.velY *= 0.2
+        st.impX = nx * 300 * S
+        st.impY = ny * 300 * S
+        st.velX *= 0.3
+        st.velY *= 0.3
         st.invuln = 0.75
-        st.stun = hadCargo ? 0.45 : 0.25
         bee.bump = 0.35
         bee._bump = 0.35
-        if (hadCargo) {
+        if (hadCargo && Math.random() < dif.dropChance) {
+          st.stun = 0.4
           dropCarried(nx, ny, true)
         } else {
+          st.stun = hadCargo ? 0.22 : 0.18
           shake(2.5 * S, 0.15)
           fx('bump', (pl.x + bx) / 2, (pl.y + by) / 2, { dur: 0.4 })
         }
@@ -898,7 +1074,7 @@ export default {
         d.scaleOut = 1 - e * 0.85
         if (k >= 1) d.state = 'out'
       } else if (d.state === 'floor' && !st.carrying && d.cooldown <= 0 && st.stun <= 0) {
-        if (dist(d.x, d.y, pl.x, pl.y) < 30 * S) {
+        if (dist(d.x, d.y, pl.x, pl.y) < (30 + 8 * (1 - st.D)) * S) {
           d.state = 'carried'
           st.carrying = d
           fx('pickup', d.x, d.y, { dur: 0.45 })
@@ -906,11 +1082,12 @@ export default {
       }
     }
     st.debris = st.debris.filter((d) => d.state !== 'out')
+    st.deliverR = dif.deliverR * S
     if (st.carrying) {
       const cp = st.carryPoint()
       st.carrying.x = cp.x
       st.carrying.y = cp.y
-      if (dist(pl.x, pl.y, L.entrance.x, L.entrance.y) < L.deliverRadius) {
+      if (dist(pl.x, pl.y, L.entrance.x, L.entrance.y) < st.deliverR) {
         const d = st.carrying
         st.carrying = null
         d.state = 'delivering'
@@ -918,6 +1095,7 @@ export default {
         st.delivered++
         st.tallyPulse = 0.6
         st.hitStop = 0.05
+        st.meter.add(0.1)
         fx('deliver', L.entrance.x, L.entrance.y, { dur: 1.1 })
       }
     }
@@ -933,13 +1111,18 @@ export default {
     for (const w of st.warnings.filter((w) => w.t >= w.dur)) spawnLarva(w.x, w.y)
     st.warnings = st.warnings.filter((w) => w.t < w.dur)
 
-    // ---- Traças: movimento errático com fuga ----
-    const fleeR = 175 * S
-    const baseFlee = 250 * S * 1.2 * dif.fleeSpeed
+    // ---- Traças: movimento errático com fuga (paradas se embalsamadas) ----
+    const fleeR = dif.fleeR * S
+    const baseFlee = 260 * S * dif.fleeSpeed
     for (const lv of st.larvae) {
       const e = lv.spawner.entities[0]
       if (!e) continue
       lv.age += dt
+      if (lv.resined) {
+        lv.fleeing = false
+        lv.anim += dt * 0.4
+        continue
+      }
       const dp = dist(e.x, e.y, pl.x, pl.y)
       let speed
       if (dp < fleeR) {
@@ -957,7 +1140,7 @@ export default {
         const k = 70 * S * lv.dodgeSide
         lv.flee.x = pl.x + px * k
         lv.flee.y = pl.y + py * k
-        speed = baseFlee * (dp < 80 * S ? 1.2 : 1) * (0.75 + 0.25 * Math.min(1, lv.age / 1.5))
+        speed = baseFlee * (dp < 80 * S ? 1.15 : 1) * (0.7 + 0.3 * Math.min(1, lv.age / 1.5))
       } else {
         lv.fleeing = false
         lv.wanderT -= dt
@@ -970,7 +1153,7 @@ export default {
         // Truque: fugir do ponto espelhado = andar em direção ao alvo.
         lv.flee.x = 2 * e.x - lv.target.x
         lv.flee.y = 2 * e.y - lv.target.y
-        speed = 55 * S
+        speed = dif.wanderSpeed * S
       }
       lv.spawner.update(dt * speed)
       // Mantém dentro do disco do favo (elíptico).
@@ -998,13 +1181,17 @@ export default {
     }
 
     // ---- Captura ----
-    const capR = (st.dashT > 0 ? 34 : 28) * S
+    const capR = (st.dashT > 0 ? dif.capR + 6 : dif.capR) * S
     for (const lv of st.larvae) {
-      const got = lv.spawner.checkCapture(pl, capR)
+      const got = lv.spawner.checkCapture(pl, lv.resined ? capR * 1.25 : capR)
       if (got.length) {
         st.captured++
+        if (lv.resined) st.resinCaptures++
+        // Captura rápida vale mais (menos tempo roendo o favo).
+        st.captureValue += clamp(1.25 - lv.age / 14, 0.35, 1)
         st.capturePulse = 0.6
         st.hitStop = 0.08
+        st.meter.add(0.12)
         shake(3.5 * S, 0.18)
         fx('capture', lv.dx, lv.dy, { dur: 0.9, heading: lv.heading, seed: lv.seed })
         lv.dead = true
@@ -1012,8 +1199,9 @@ export default {
     }
     st.larvae = st.larvae.filter((lv) => !lv.dead)
 
-    // ---- Dano ----
-    st.gauge.setRate(st.larvae.length * dif.damageRate)
+    // ---- Dano (traças embalsamadas não roem) ----
+    const active = st.larvae.filter((lv) => !lv.resined).length
+    st.gauge.setRate(active * dif.damageRate)
     st.gauge.update(dt)
     const step = Math.floor(st.gauge.value / 5)
     if (step > st.lastDmgStep) {
@@ -1025,14 +1213,22 @@ export default {
   render(context, ctx) {
     if (!st) return
     const L = st.L
-    const { W, H, S } = L
+    const { S } = L
     const t = st.time
+    const lay = context.layout
+
+    // Fundo da tela toda.
+    ctx.fillStyle = '#241A10'
+    ctx.fillRect(0, 0, lay.width, lay.height)
+    ctx.drawImage(st.backdrop, 0, 0, st.view.screenW, st.view.screenH)
 
     ctx.save()
     if (st.shakeMag > 0) ctx.translate(rand(-1, 1) * st.shakeMag, rand(-1, 1) * st.shakeMag)
+    applyView(ctx)
 
-    ctx.drawImage(st.bg, 0, 0, W, H)
-    ctx.drawImage(st.damageCanvas, 0, 0, W, H)
+    const M = L.margin
+    ctx.drawImage(st.bg, -M, -M, L.W + M * 2, L.H + M * 2)
+    ctx.drawImage(st.damageCanvas, 0, 0, L.W, L.H)
     renderEntranceGlow(ctx)
 
     // Detritos no chão / no ar.
@@ -1065,7 +1261,8 @@ export default {
     // Traças.
     for (const lv of st.larvae) {
       const sc = 2.2 * S * Math.min(1, 0.4 + lv.age * 2)
-      drawWaxMothLarva(ctx, createWaxMothLarvaPose(lv.dx, lv.dy, lv.anim / 3, { rotation: lv.heading, scale: sc, seed: lv.seed }))
+      if (lv.resined) renderResinedLarva(ctx, lv, sc)
+      else drawWaxMothLarva(ctx, createWaxMothLarvaPose(lv.dx, lv.dy, lv.anim / 3, { rotation: lv.heading, scale: sc, seed: lv.seed }))
     }
 
     // Abelhas do trânsito.
@@ -1078,20 +1275,23 @@ export default {
       }
     }
 
+    renderWave(ctx)
     renderPlayer(ctx)
     renderFx(ctx)
     ctx.restore()
 
-    renderHud(ctx)
+    renderHint(ctx, context)
 
     if (st.time >= SHIFT_DURATION) {
       const k = clamp(st.endT / END_FADE, 0, 1)
       ctx.save()
       ctx.fillStyle = `rgba(26, 20, 16, ${0.7 * ease(k, 'easeInOutQuad')})`
-      ctx.fillRect(0, 0, W, H)
+      ctx.fillRect(0, 0, lay.width, lay.height)
       ctx.restore()
-      renderHud(ctx, true)
     }
+    renderHud(ctx, context)
+
+    context.controls.render(ctx, lay)
   },
 
   exit() {
@@ -1100,7 +1300,7 @@ export default {
 }
 
 // ---------------------------------------------------------------------------
-// Render helpers
+// Render helpers (mundo, coordenadas canônicas)
 // ---------------------------------------------------------------------------
 
 function renderEntranceGlow(ctx) {
@@ -1111,6 +1311,7 @@ function renderEntranceGlow(ctx) {
   const breath = 0.5 + 0.5 * Math.sin(st.time * 1.3)
   const strength = carrying ? 0.32 + 0.1 * breath : 0.14 + 0.06 * breath
   const R = (carrying ? 170 : 130) * S
+  const dr = st.deliverR ?? 80 * S
   ctx.save()
   const g = ctx.createRadialGradient(E.x, E.y, 4 * S, E.x, E.y, R)
   g.addColorStop(0, withAlpha(PAL.sunHalo, strength))
@@ -1125,15 +1326,14 @@ function renderEntranceGlow(ctx) {
     ctx.setLineDash([2 * S, 5 * S])
     ctx.lineDashOffset = -st.time * 12
     ctx.beginPath()
-    ctx.arc(E.x, E.y, L.deliverRadius, -Math.PI * 0.5, Math.PI * 0.5)
+    ctx.arc(E.x, E.y, dr, -Math.PI * 0.5, Math.PI * 0.5)
     ctx.stroke()
     ctx.setLineDash([])
     for (let i = -4; i <= 4; i++) {
       const a = (i / 4) * Math.PI * 0.45
-      const r0 = L.deliverRadius
       ctx.beginPath()
-      ctx.moveTo(E.x + Math.cos(a) * r0, E.y + Math.sin(a) * r0)
-      ctx.lineTo(E.x + Math.cos(a) * (r0 + (i % 2 ? 3 : 6) * S), E.y + Math.sin(a) * (r0 + (i % 2 ? 3 : 6) * S))
+      ctx.moveTo(E.x + Math.cos(a) * dr, E.y + Math.sin(a) * dr)
+      ctx.lineTo(E.x + Math.cos(a) * (dr + (i % 2 ? 3 : 6) * S), E.y + Math.sin(a) * (dr + (i % 2 ? 3 : 6) * S))
       ctx.stroke()
     }
   }
@@ -1165,10 +1365,104 @@ function drawSpriteBee(ctx, x, y, heading, variant, frame, alpha = 1, bump = 0, 
   ctx.save()
   ctx.translate(x, y)
   ctx.rotate(heading + (bump > 0 ? Math.sin(bump * 40) * 0.25 : 0))
-  if (Math.cos(heading) < 0) ctx.scale(1, -1)
+  if (Math.cos(heading + st.view.rot) < 0) ctx.scale(1, -1)
   if (scale !== 1) ctx.scale(scale, scale)
   ctx.globalAlpha = alpha
   ctx.drawImage(img, -spr.box / 2, -spr.box / 2, spr.box, spr.box)
+  ctx.restore()
+}
+
+// Traça embalsamada: halo âmbar, casca de resina translúcida e contagem regressiva fina.
+function renderResinedLarva(ctx, lv, sc) {
+  const S = st.L.S
+  const t = st.time
+  const remain = st.meter.activeRemaining
+  const blink = remain < 1.2 && Math.sin(t * 22) > 0
+  const since = clamp((t - lv.resinAt) / 0.35, 0, 1)
+  ctx.save()
+  const R = 26 * S
+  const glow = ctx.createRadialGradient(lv.dx, lv.dy, 2, lv.dx, lv.dy, R * (1.1 + 0.1 * Math.sin(t * 5)))
+  glow.addColorStop(0, withAlpha(PAL.sunGold, 0.5 * since))
+  glow.addColorStop(1, withAlpha(PAL.sunGold, 0))
+  ctx.fillStyle = glow
+  ctx.beginPath()
+  ctx.arc(lv.dx, lv.dy, R * 1.3, 0, TAU)
+  ctx.fill()
+  ctx.restore()
+
+  drawWaxMothLarva(ctx, createWaxMothLarvaPose(lv.dx, lv.dy, lv.anim, { rotation: lv.heading, scale: sc, seed: lv.seed }))
+
+  ctx.save()
+  ctx.translate(lv.dx, lv.dy)
+  ctx.rotate(lv.heading)
+  ctx.fillStyle = withAlpha(blink ? PAL.sunHalo : PAL.caterpillarGold, 0.38 * since)
+  ctx.beginPath()
+  ctx.ellipse(0, 0, 17 * S, 9 * S, 0, 0, TAU)
+  ctx.fill()
+  ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.7 * since)
+  ctx.lineWidth = 1
+  ctx.stroke()
+  // brilho especular
+  ctx.strokeStyle = withAlpha('#FFFFFF', 0.35 * since)
+  ctx.beginPath()
+  ctx.ellipse(-3 * S, -3 * S, 9 * S, 3.5 * S, 0, Math.PI * 1.1, Math.PI * 1.7)
+  ctx.stroke()
+  ctx.restore()
+
+  // Arco de contagem do efeito.
+  const frac = st.meter.duration > 0 ? remain / st.meter.duration : 0
+  ctx.save()
+  ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.75)
+  ctx.lineWidth = 1.2
+  ctx.beginPath()
+  ctx.arc(lv.dx, lv.dy, 22 * S, -Math.PI / 2, -Math.PI / 2 + TAU * frac)
+  ctx.stroke()
+  ctx.restore()
+}
+
+// Onda de resina: arco técnico fino + preenchimento âmbar translúcido.
+function renderWave(ctx) {
+  const w = st.wave
+  if (!w) return
+  const S = st.L.S
+  const R = waveRadius()
+  if (R < 1) return
+  const k = clamp(w.t / WAVE_EXPAND, 0, 1)
+  const fade = 1 - clamp((w.t - WAVE_EXPAND) / (WAVE_LIFE - WAVE_EXPAND), 0, 1)
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(0, 0, st.L.W, st.L.H)
+  ctx.clip()
+  const g = ctx.createRadialGradient(w.x, w.y, R * 0.55, w.x, w.y, R)
+  g.addColorStop(0, withAlpha(PAL.caterpillarGold, 0.04 * fade))
+  g.addColorStop(0.85, withAlpha(PAL.sunGold, 0.2 * fade))
+  g.addColorStop(1, withAlpha(PAL.sunGold, 0.05 * fade))
+  ctx.fillStyle = g
+  ctx.beginPath()
+  ctx.arc(w.x, w.y, R, 0, TAU)
+  ctx.fill()
+  ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.85 * fade)
+  ctx.lineWidth = 1.2
+  ctx.beginPath()
+  ctx.arc(w.x, w.y, R, 0, TAU)
+  ctx.stroke()
+  // marcas de escala no arco
+  const ticks = 72
+  for (let i = 0; i < ticks; i++) {
+    const a = (i / ticks) * TAU + k * 0.4
+    const len = (i % 6 === 0 ? 9 : 4) * S
+    ctx.lineWidth = i % 6 === 0 ? 1 : 0.7
+    ctx.beginPath()
+    ctx.moveTo(w.x + Math.cos(a) * R, w.y + Math.sin(a) * R)
+    ctx.lineTo(w.x + Math.cos(a) * (R - len), w.y + Math.sin(a) * (R - len))
+    ctx.stroke()
+  }
+  // segundo arco interno pontilhado
+  ctx.setLineDash([2 * S, 5 * S])
+  ctx.strokeStyle = withAlpha(PAL.sunGold, 0.5 * fade)
+  ctx.beginPath()
+  ctx.arc(w.x, w.y, R * 0.82, 0, TAU)
+  ctx.stroke()
   ctx.restore()
 }
 
@@ -1193,7 +1487,7 @@ function renderPlayer(ctx) {
   if (!carry && st.dashCd > 0) {
     ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.5)
     ctx.beginPath()
-    ctx.arc(pl.x, pl.y, 34 * S, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - st.dashCd / 0.65))
+    ctx.arc(pl.x, pl.y, 34 * S, -Math.PI / 2, -Math.PI / 2 + TAU * (1 - st.dashCd / DASH_CD))
     ctx.stroke()
   }
   ctx.restore()
@@ -1209,7 +1503,7 @@ function renderPlayer(ctx) {
   ctx.translate(pl.x, pl.y)
   const wob = st.stun > 0 ? Math.sin(st.stun * 50) * 0.3 : 0
   ctx.rotate(st.heading + wob)
-  const flip = Math.cos(st.heading) < 0
+  const flip = Math.cos(st.heading + st.view.rot) < 0
   if (flip) ctx.scale(1, -1)
   drawBeeBody(ctx, pose)
   ctx.restore()
@@ -1274,6 +1568,15 @@ function renderFx(ctx) {
         ctx.stroke()
         break
       }
+      case 'resin': {
+        const r = (8 + 26 * ease(k, 'easeOutCubic')) * S
+        ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.8 * (1 - k))
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc(f.x, f.y, r, 0, TAU)
+        ctx.stroke()
+        break
+      }
       case 'deliver': {
         for (let i = 0; i < 3; i++) {
           const kk = clamp(k * 1.4 - i * 0.18, 0, 1)
@@ -1332,132 +1635,170 @@ function renderFx(ctx) {
   }
 }
 
-function renderHud(ctx, final = false) {
-  const L = st.L
-  const { W, HS } = L
+// ---------------------------------------------------------------------------
+// HUD (coordenadas de tela, na faixa layout.hudBar) e dica inicial
+// ---------------------------------------------------------------------------
+
+function renderHint(ctx, context) {
   const t = st.time
-  const reveal = ease(clamp(t / 1.4, 0, 1), 'easeInOutCubic')
-  const cx = W - 78 * HS
-  const cy = 80 * HS
-  const R = 52 * HS
+  const lay = context.layout
+  const pf = st.view.pf
+  const u = clamp(lay.uiScale || 1, 0.85, 1.3)
+  let msg = null
+  let alpha = 0
+  if (t < 6) {
+    msg = context.controls.isTouch
+      ? 'arraste para voar · encoste para pegar · leve à entrada'
+      : 'WASD/setas ou mouse · encoste para pegar · leve à entrada'
+    alpha = clamp(Math.min(t / 0.5, (6 - t) / 0.8), 0, 1)
+  } else if (st.meter.isReady && st.meter.readyTime < 3.5 && st.resinUses === 0) {
+    msg = context.controls.isTouch ? 'resina pronta — toque RESINA' : 'resina pronta — tecla E'
+    alpha = clamp(Math.min(st.meter.readyTime / 0.4, (3.5 - st.meter.readyTime) / 0.6), 0, 1)
+  }
+  if (!msg || alpha <= 0) return
+  ctx.save()
+  ctx.globalAlpha = alpha
+  ctx.font = `italic ${Math.round(13 * u)}px Georgia, serif`
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const w = Math.min(pf.w - 16, ctx.measureText(msg).width + 24 * u)
+  const x = pf.x + pf.w / 2
+  const y = pf.y + pf.h - 22 * u
+  ctx.fillStyle = 'rgba(26, 20, 16, 0.72)'
+  ctx.fillRect(x - w / 2, y - 13 * u, w, 26 * u)
+  ctx.strokeStyle = withAlpha(PAL.paperCreamLight, 0.3)
+  ctx.lineWidth = 1
+  ctx.strokeRect(x - w / 2 + 0.5, y - 13 * u + 0.5, w - 1, 26 * u - 1)
+  ctx.fillStyle = PAL.paperCreamLight
+  ctx.fillText(msg, x, y, w - 12)
+  ctx.restore()
+}
+
+function renderHud(ctx, context) {
+  const lay = context.layout
+  const hb = lay.hudBar
+  const u = clamp(lay.uiScale || 1, 0.85, 1.3)
+  const t = st.time
   const cream = PAL.paperCreamLight
+  const reveal = ease(clamp(t / 1.2, 0, 1), 'easeInOutCubic')
   const p = clamp(t / SHIFT_DURATION, 0, 1)
-  const lastSecs = SHIFT_DURATION - t < 10 && !final
+  const remaining = Math.max(0, Math.ceil(SHIFT_DURATION - t))
+  const lastSecs = SHIFT_DURATION - t < 10 && t < SHIFT_DURATION
+  const cy = hb.y + hb.h / 2
 
   ctx.save()
   ctx.lineCap = 'round'
+  // Faixa escura (cobre também o notch).
+  ctx.fillStyle = 'rgba(26, 20, 16, 0.78)'
+  ctx.fillRect(0, 0, lay.width, hb.y + hb.h)
+  ctx.strokeStyle = withAlpha(cream, 0.22)
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(hb.x, hb.y + hb.h - 0.5)
+  ctx.lineTo(hb.x + hb.w, hb.y + hb.h - 0.5)
+  ctx.stroke()
 
-  // Disco de fundo translúcido para leitura.
-  const bgG = ctx.createRadialGradient(cx, cy, R * 0.2, cx, cy, R * 1.5)
-  bgG.addColorStop(0, 'rgba(26, 20, 16, 0.55)')
-  bgG.addColorStop(1, 'rgba(26, 20, 16, 0)')
-  ctx.fillStyle = bgG
-  ctx.fillRect(cx - R * 1.6, cy - R * 1.6, R * 3.2, R * 3.2)
-
-  // Mostrador do tempo: círculo fino + marcas de escala reveladas progressivamente.
+  // Relógio do turno.
+  const R = Math.min(hb.h * 0.36, 19 * u)
+  const tx = hb.x + 12 * u + R
   const top = -Math.PI / 2
   ctx.strokeStyle = withAlpha(cream, 0.28)
   ctx.lineWidth = 1
   ctx.beginPath()
-  ctx.arc(cx, cy, R, top, top + TAU * reveal)
+  ctx.arc(tx, cy, R, 0, TAU)
   ctx.stroke()
-  const ticks = 70
-  for (let i = 0; i < ticks * reveal; i++) {
-    const a = top + (i / ticks) * TAU
-    const major = i % 10 === 0
-    const passed = i / ticks <= p
-    const len = (major ? 7 : 3) * HS
-    ctx.strokeStyle = withAlpha(cream, passed ? 0.22 : major ? 0.7 : 0.42)
-    ctx.lineWidth = major ? 1.2 : 0.8
+  for (let i = 0; i < 12; i++) {
+    const a = top + (i / 12) * TAU
+    const len = (i % 3 === 0 ? 4 : 2) * u
+    ctx.strokeStyle = withAlpha(cream, i / 12 <= p ? 0.2 : 0.55)
     ctx.beginPath()
-    ctx.moveTo(cx + Math.cos(a) * (R + 3 * HS), cy + Math.sin(a) * (R + 3 * HS))
-    ctx.lineTo(cx + Math.cos(a) * (R + 3 * HS + len), cy + Math.sin(a) * (R + 3 * HS + len))
+    ctx.moveTo(tx + Math.cos(a) * (R + 2 * u), cy + Math.sin(a) * (R + 2 * u))
+    ctx.lineTo(tx + Math.cos(a) * (R + 2 * u + len), cy + Math.sin(a) * (R + 2 * u + len))
     ctx.stroke()
   }
   const timeCol = lastSecs && Math.sin(t * 10) > 0 ? PAL.sunHalo : PAL.sunGold
   ctx.strokeStyle = timeCol
   ctx.lineWidth = 2.2
   ctx.beginPath()
-  ctx.arc(cx, cy, R, top, top + TAU * p * reveal)
+  ctx.arc(tx, cy, R, top, top + TAU * p * reveal)
   ctx.stroke()
-  const ea = top + TAU * p * reveal
-  ctx.fillStyle = timeCol
-  ctx.beginPath()
-  ctx.arc(cx + Math.cos(ea) * R, cy + Math.sin(ea) * R, 2.6 * HS, 0, TAU)
-  ctx.fill()
+  ctx.fillStyle = cream
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `600 ${Math.round(13 * u)}px Georgia, serif`
+  ctx.fillText(String(remaining), tx, cy + 1)
 
-  // Transferidor interno: dano no favo (único uso de accentPink na cena).
-  const r2 = 34 * HS
+  // Contadores: detritos entregues (x/meta) e traças capturadas.
+  const tallyK = st.tallyPulse / 0.6
+  const capK = st.capturePulse / 0.6
+  const iconR = 12 * u
+  const x1 = tx + R + 18 * u + iconR
+  ctx.lineWidth = 1
+  ctx.strokeStyle = withAlpha(cream, 0.45 + 0.55 * tallyK)
+  ctx.beginPath()
+  ctx.arc(x1, cy, iconR + tallyK * 3 * u, 0, TAU)
+  ctx.stroke()
+  const ic = st.iconDebris
+  ctx.drawImage(ic.canvas, x1 - ic.box / 2, cy - ic.box / 2, ic.box, ic.box)
+  ctx.textAlign = 'left'
+  const goal = deliverTarget()
+  ctx.font = `${Math.round(17 * u + tallyK * 3)}px Georgia, serif`
+  ctx.fillStyle = st.delivered >= goal ? PAL.sunHalo : cream
+  const dText = String(st.delivered)
+  ctx.fillText(dText, x1 + iconR + 6 * u, cy + 1)
+  const dW = ctx.measureText(dText).width
+  ctx.font = `italic ${Math.round(12 * u)}px Georgia, serif`
+  ctx.fillStyle = withAlpha(cream, 0.6)
+  ctx.fillText(`/${goal}`, x1 + iconR + 7 * u + dW, cy + 3 * u)
+
+  const x2 = x1 + iconR * 2 + 64 * u
+  ctx.strokeStyle = withAlpha(cream, 0.45 + 0.55 * capK)
+  ctx.beginPath()
+  ctx.arc(x2, cy, iconR + capK * 3 * u, 0, TAU)
+  ctx.stroke()
+  drawWaxMothLarva(ctx, createWaxMothLarvaPose(x2, cy, t, { scale: 0.8 * u, seed: 4 }))
+  ctx.fillStyle = cream
+  ctx.font = `${Math.round(17 * u + capK * 3)}px Georgia, serif`
+  ctx.fillText(String(st.captured), x2 + iconR + 6 * u, cy + 1)
+
+  // Transferidor do dano no favo (único uso de accentPink fora do botão pronto).
+  const r2 = Math.min(hb.h * 0.36, 18 * u)
+  const dx = hb.x + hb.w - 12 * u - r2
+  const dcy = cy + r2 * 0.12
   const a0 = Math.PI * 0.75
   const span = Math.PI * 1.5
   const dmg = clamp(st.gauge.value / 100, 0, 1)
   ctx.strokeStyle = withAlpha(cream, 0.3)
   ctx.lineWidth = 1
   ctx.beginPath()
-  ctx.arc(cx, cy, r2, a0, a0 + span * reveal)
+  ctx.arc(dx, dcy, r2, a0, a0 + span * reveal)
   ctx.stroke()
-  for (let i = 0; i <= 20; i++) {
-    if (i / 20 > reveal) break
-    const a = a0 + (i / 20) * span
-    const len = (i % 5 === 0 ? 5 : 2) * HS
+  for (let i = 0; i <= 10; i++) {
+    const a = a0 + (i / 10) * span
+    const len = (i % 5 === 0 ? 4 : 2) * u
     ctx.strokeStyle = withAlpha(cream, i % 5 === 0 ? 0.6 : 0.3)
     ctx.beginPath()
-    ctx.moveTo(cx + Math.cos(a) * (r2 - 2 * HS), cy + Math.sin(a) * (r2 - 2 * HS))
-    ctx.lineTo(cx + Math.cos(a) * (r2 - 2 * HS - len), cy + Math.sin(a) * (r2 - 2 * HS - len))
+    ctx.moveTo(dx + Math.cos(a) * (r2 + 2 * u), dcy + Math.sin(a) * (r2 + 2 * u))
+    ctx.lineTo(dx + Math.cos(a) * (r2 + 2 * u + len), dcy + Math.sin(a) * (r2 + 2 * u + len))
     ctx.stroke()
   }
-  // Escala do dano: 0–50% ocupa o arco todo (acima disso fica cheio e pulsa).
   const dmgK = clamp(dmg / 0.5, 0, 1)
   const pulse = st.dmgPulse > 0 ? st.dmgPulse / 0.7 : 0
   if (dmgK > 0.001) {
     ctx.strokeStyle = PAL.accentPink
     ctx.lineWidth = 2.4 + pulse * 2
     ctx.beginPath()
-    ctx.arc(cx, cy, r2, a0, a0 + span * dmgK)
+    ctx.arc(dx, dcy, r2, a0, a0 + span * dmgK)
     ctx.stroke()
   }
-  const na = a0 + span * dmgK
-  ctx.strokeStyle = withAlpha(cream, 0.75)
-  ctx.lineWidth = 1
-  ctx.beginPath()
-  ctx.moveTo(cx, cy)
-  ctx.lineTo(cx + Math.cos(na) * (r2 - 9 * HS), cy + Math.sin(na) * (r2 - 9 * HS))
-  ctx.stroke()
-  ctx.fillStyle = withAlpha(cream, 0.8)
-  ctx.beginPath()
-  ctx.arc(cx, cy, 2 * HS, 0, TAU)
-  ctx.fill()
-  ctx.globalAlpha = reveal
   ctx.fillStyle = cream
   ctx.textAlign = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.font = `italic ${Math.round(12 * HS + pulse * 3)}px Georgia, serif`
-  ctx.fillText(`${Math.round(st.gauge.value)}%`, cx, cy + r2 * 0.62)
-
-  // Mini-diagramas: detritos entregues e traças capturadas.
-  const iconR = 15 * HS
-  const ix = cx - R - 44 * HS
-  const iy1 = cy - 20 * HS
-  const iy2 = cy + 22 * HS
-  const tallyK = st.tallyPulse / 0.6
-  const capK = st.capturePulse / 0.6
-  ctx.lineWidth = 1
-  ctx.strokeStyle = withAlpha(cream, 0.5 + 0.5 * tallyK)
-  ctx.beginPath()
-  ctx.arc(ix, iy1, iconR + tallyK * 4 * HS, 0, TAU)
-  ctx.stroke()
-  const ic = st.iconDebris
-  ctx.drawImage(ic.canvas, ix - ic.box / 2, iy1 - ic.box / 2, ic.box, ic.box)
-  ctx.strokeStyle = withAlpha(cream, 0.5 + 0.5 * capK)
-  ctx.beginPath()
-  ctx.arc(ix, iy2, iconR + capK * 4 * HS, 0, TAU)
-  ctx.stroke()
-  drawWaxMothLarva(ctx, createWaxMothLarvaPose(ix, iy2, t, { scale: 0.95 * HS, seed: 4 }))
+  ctx.font = `italic ${Math.round(11 * u + pulse * 2)}px Georgia, serif`
+  ctx.fillText(`${Math.round(st.gauge.value)}%`, dx, dcy + 1)
+  ctx.font = `${Math.round(9 * u)}px Georgia, serif`
+  ctx.fillStyle = withAlpha(cream, 0.55)
   ctx.textAlign = 'right'
-  ctx.font = `${Math.round(17 * HS + tallyK * 4)}px Georgia, serif`
-  ctx.fillText(String(st.delivered), ix - iconR - 8 * HS, iy1 + 1)
-  ctx.font = `${Math.round(17 * HS + capK * 4)}px Georgia, serif`
-  ctx.fillText(String(st.captured), ix - iconR - 8 * HS, iy2 + 1)
+  ctx.fillText('favo', dx - r2 - 8 * u, cy + 1)
   ctx.restore()
 }
 
@@ -1466,18 +1807,18 @@ function renderHud(ctx, final = false) {
 // ---------------------------------------------------------------------------
 
 function computeResult() {
-  const d = Math.min(st.shiftIndex, 4)
   const dmg = st.gauge.value
-  const deliverTarget = 9 + 0.5 * d
-  const dNorm = clamp(st.delivered / deliverTarget, 0, 1)
-  const pestRatio = st.pestsSpawned > 0 ? st.captured / st.pestsSpawned : 1
-  const dmgNorm = clamp(1 - dmg / 50, 0, 1)
-  const score = Math.round(clamp(100 * (0.4 * dNorm + 0.3 * pestRatio + 0.3 * dmgNorm), 0, 100))
+  const goal = deliverTarget()
+  const dNorm = Math.pow(clamp(st.delivered / goal, 0, 1), 1.5)
+  const pestRatio = st.pestsSpawned > 0 ? clamp(st.captureValue / st.pestsSpawned, 0, 1) : 1
+  const dmgNorm = clamp(1 - dmg / 25, 0, 1)
+  const score = Math.round(clamp(100 * (0.6 * dNorm + 0.25 * pestRatio + 0.15 * dmgNorm), 0, 100))
   const nd = st.delivered
   const nc = st.captured
-  const summary =
+  let summary =
     `${nd} ${nd === 1 ? 'detrito removido' : 'detritos removidos'}, ` +
     `${nc} ${nc === 1 ? 'traça capturada' : 'traças capturadas'}, ` +
     `favo ${Math.round(dmg)}% danificado`
+  if (st.resinUses > 0) summary += `; resina usada ${st.resinUses}×`
   return { score, summary }
 }

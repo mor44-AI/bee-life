@@ -1,37 +1,96 @@
 // EndOfMarco1State — enter(context, { reason }):
 //   'completed' -> dominou a defesa da entrada: "Continua em breve — lá fora, o mundo ultravioleta espera"
 //   'lifeOver'  -> a vida chegou ao fim antes disso.
-// Resumo: dias vividos, função final e estado final da colônia (mostradores estáticos).
-// Clique/tecla -> goTo('menu').
+// Resumo: dias vividos, função final e estado final da colônia (mostradores estáticos,
+// grade 3×2 em tela estreita). Vertical primeiro: emblema, título, cartão e botão grande
+// "Voltar ao menu" na zona do polegar. Toque/clique em qualquer lugar ou tecla
+// (após MIN_TIME) -> goTo('menu').
 
 import { ease } from '../engine/tween.js'
 import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { UI, font, drawDial, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
-import { createPaperBackdrop, createKeyWatcher, drawPaperCard, wrapText, rankName, COLONY_INDICATORS, fadeScreen } from '../ui/HUD.js'
+import {
+  createPaperBackdrop,
+  drawPaperCard,
+  drawButton,
+  wrapText,
+  rankName,
+  COLONY_INDICATORS,
+  fadeScreen,
+  screenLayout,
+  safeRect,
+  uiScaleOf,
+  anyKeyPressed,
+  continueHint,
+  drawHint,
+} from '../ui/HUD.js'
 
 const KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const MIN_TIME = 1.2
 
 const backdrop = createPaperBackdrop({ seed: 97 })
-let keys = null
 let t = 0
 let reason = 'completed'
 
-const clamp01 = (v) => Math.max(0, Math.min(1, v))
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
+const clamp01 = (v) => clamp(v, 0, 1)
 const seg = (time, a, b) => ease(clamp01((time - a) / (b - a)), 'easeInOutCubic')
+
+const SUBTITLE = {
+  completed: 'lá fora, o mundo ultravioleta espera',
+  lifeOver: 'A sua vida chegou ao fim antes de dominar a defesa da entrada. A colônia segue.',
+}
+
+function computeLayout(context, ctx) {
+  const L = screenLayout(context)
+  const S = safeRect(L)
+  const u = uiScaleOf(L)
+  const cx = S.x + S.w / 2
+  const titleSize = Math.max(28, Math.min(46, S.w * 0.085))
+  const subSize = Math.max(15 * u, titleSize * 0.4)
+  const subLH = subSize * 1.35
+  ctx.save()
+  ctx.font = font(subSize, { style: 'italic' })
+  const subLines = wrapText(ctx, SUBTITLE[reason], Math.min(560, S.w - 48))
+  ctx.restore()
+
+  const cardW = Math.min(640, S.w - 24)
+  const narrow = cardW < 520
+  const perRow = narrow ? 3 : 6
+  const slot = (cardW - 32) / perRow
+  const labelSize = 12 * u
+  const radius = clamp(slot * 0.2, 15, 22 * u)
+  const rowH = radius * 2 + 16 + labelSize * 1.25 + 8 * u
+  const headH = narrow ? 88 * u : 66 * u
+  const cardH = headH + rowH * Math.ceil(COLONY_INDICATORS.length / perRow) + 6 * u
+
+  const btnH = Math.max(L.minTouch ?? 56, Math.round(60 * u))
+  const btnW = Math.min(360, S.w - 40)
+  const btn = { x: cx - btnW / 2, y: S.y + S.h - btnH - 40 * u, w: btnW, h: btnH }
+
+  // Altura fixa (sem o emblema) -> o emblema fica com o espaço que sobra.
+  const fixed = 16 * u + titleSize + titleSize * 0.85 + (subLines.length - 1) * subLH + 22 * u + 16 * u + cardH + 16 * u
+  const avail = btn.y - S.y - fixed
+  const R = clamp(avail / 3.3, 34, Math.min(S.w * 0.2, 120))
+  const cy = S.y + 12 * u + R * 1.6
+  const titleY = cy + R * 1.6 + titleSize * 0.9
+  const ulY = titleY + titleSize * 0.85 + (subLines.length - 1) * subLH + 14 * u
+  const cardY = Math.min(btn.y - cardH - 14 * u, ulY + 20 * u)
+  const card = { x: cx - cardW / 2, y: cardY, w: cardW, h: cardH }
+
+  return { L, S, u, cx, cy, R, titleSize, subSize, subLH, subLines, titleY, ulY, card, narrow, perRow, slot, radius, rowH, headH, labelSize, btn }
+}
 
 export default {
   enter(context, data = {}) {
     t = 0
     reason = data.reason === 'lifeOver' ? 'lifeOver' : 'completed'
-    keys = createKeyWatcher(context.input, KEYS)
-    keys.prime()
     context.input.consumeClicks()
   },
 
   update(context, dt) {
     t += dt
-    const pressed = context.input.consumeClicks().length > 0 || keys.poll().size > 0
+    const pressed = context.input.consumeClicks().length > 0 || anyKeyPressed(context.input, KEYS)
     if (pressed && t >= MIN_TIME) context.goTo('menu')
   },
 
@@ -40,9 +99,8 @@ export default {
     const h = context.height
     backdrop.draw(ctx, 0, 0, w, h)
     const completed = reason === 'completed'
-    const cx = w / 2
-    const R = Math.max(60, Math.min(w * 0.2, h * 0.17))
-    const cy = Math.max(R * 1.3 + 10, h * 0.25)
+    const M = computeLayout(context, ctx)
+    const { cx, cy, R, u } = M
 
     // Emblema: para 'completed', a entrada do ninho aberta para uma luz de fora;
     // para 'lifeOver', um mostrador que se fecha em silêncio.
@@ -52,7 +110,6 @@ export default {
       glow.addColorStop(1, 'rgba(247, 223, 160, 0)')
       ctx.fillStyle = glow
       ctx.fillRect(cx - R * 1.7, cy - R * 1.7, R * 3.4, R * 3.4)
-      // Raios finos pontilhados "de fora".
       for (let i = 0; i < 16; i++) {
         const a = (i / 16) * Math.PI * 2 + t * 0.02
         drawGuideLine(ctx, cx + Math.cos(a) * R * 1.1, cy + Math.sin(a) * R * 1.1, cx + Math.cos(a) * R * 1.55, cy + Math.sin(a) * R * 1.55, {
@@ -94,78 +151,74 @@ export default {
     )
 
     // Títulos.
-    const titleY = cy + R * 1.35 + 30
-    const titleSize = Math.max(26, Math.min(46, w * 0.055))
     ctx.save()
     ctx.textAlign = 'center'
+    ctx.textBaseline = 'alphabetic'
     ctx.fillStyle = UI.ink
     ctx.globalAlpha = seg(t, 0.6, 1.5)
-    ctx.font = font(titleSize)
-    ctx.fillText(completed ? 'Continua em breve' : 'Uma vida inteira', cx, titleY)
-    ctx.globalAlpha = 0.8 * seg(t, 1.0, 2.0)
-    ctx.font = font(Math.max(14, titleSize * 0.4), { style: 'italic' })
-    const sub = completed
-      ? 'lá fora, o mundo ultravioleta espera'
-      : 'A sua vida chegou ao fim antes de dominar a defesa da entrada. A colônia segue.'
-    const subLines = wrapText(ctx, sub, Math.min(560, w - 48))
-    subLines.forEach((line, i) => ctx.fillText(line, cx, titleY + titleSize * 0.85 + i * 22))
+    ctx.font = font(M.titleSize)
+    ctx.fillText(completed ? 'Continua em breve' : 'Uma vida inteira', cx, M.titleY)
+    ctx.globalAlpha = 0.88 * seg(t, 1.0, 2.0)
+    ctx.font = font(M.subSize, { style: 'italic' })
+    M.subLines.forEach((line, i) => ctx.fillText(line, cx, M.titleY + M.titleSize * 0.85 + i * M.subLH))
     // Único acento rosa: filete sob o subtítulo.
-    const ulY = titleY + titleSize * 0.85 + (subLines.length - 1) * 22 + 14
     const ulW = 60 * seg(t, 1.4, 2.2)
     ctx.globalAlpha = 1
     ctx.strokeStyle = UI.pink
     ctx.lineWidth = 1.3
     ctx.beginPath()
-    ctx.moveTo(cx - ulW, ulY)
-    ctx.lineTo(cx + ulW, ulY)
+    ctx.moveTo(cx - ulW, M.ulY)
+    ctx.lineTo(cx + ulW, M.ulY)
     ctx.stroke()
     ctx.restore()
 
     // Resumo em cartão.
-    const cardW = Math.min(640, w - 32)
-    const narrow = cardW < 520
-    const cardH = narrow ? 256 : 150
-    const cardX = cx - cardW / 2
-    const cardY = Math.min(h - cardH - 40, ulY + 24)
+    const { card, narrow } = M
+    const padX = 20 * u
     const cp = seg(t, 1.3, 2.2)
-    drawPaperCard(ctx, cardX, cardY, cardW, cardH, { seed: 64, alpha: cp })
+    drawPaperCard(ctx, card.x, card.y, card.w, card.h, { seed: 64, alpha: cp })
     ctx.save()
-    ctx.globalAlpha = cp
     ctx.fillStyle = UI.ink
     ctx.textAlign = 'left'
-    ctx.font = font(9)
-    setLetterSpacing(ctx, 1.6)
-    ctx.globalAlpha = cp * 0.6
-    ctx.fillText('REGISTRO DE CAMPO', cardX + 22, cardY + 28)
+    ctx.textBaseline = 'alphabetic'
+    ctx.font = font(12 * u)
+    setLetterSpacing(ctx, 1.5)
+    ctx.globalAlpha = cp * 0.8
+    ctx.fillText('REGISTRO DE CAMPO', card.x + padX, card.y + 28 * u)
     setLetterSpacing(ctx, 0)
     ctx.globalAlpha = cp
-    ctx.font = font(15)
+    ctx.font = font(16 * u)
     const rank = rankName(context.tasks?.currentRank)
-    ctx.fillText(`Dias vividos: ${daysLived} de ${maxDays}`, cardX + 22, cardY + 52)
+    ctx.fillText(`Dias vividos: ${daysLived} de ${maxDays}`, card.x + padX, card.y + 52 * u)
     ctx.textAlign = narrow ? 'left' : 'right'
-    ctx.fillText(`Função final: ${rank}`, narrow ? cardX + 22 : cardX + cardW - 22, narrow ? cardY + 74 : cardY + 52)
+    ctx.fillText(`Função final: ${rank}`, narrow ? card.x + padX : card.x + card.w - padX, narrow ? card.y + 75 * u : card.y + 52 * u)
     ctx.restore()
 
     const colony = context.colony || {}
-    const dialsTop = cardY + (narrow ? 96 : 70)
-    const perRow = narrow ? 3 : 6
-    const slot = (cardW - 32) / perRow
-    const radius = Math.max(14, Math.min(22, slot * 0.28))
-    COLONY_INDICATORS.forEach(({ key, label }, i) => {
-      const row = Math.floor(i / perRow)
-      const col = i % perRow
-      const dx = cardX + 16 + slot * (col + 0.5)
-      const dy = dialsTop + radius + 4 + row * (radius * 2 + 34)
-      drawDial(ctx, dx, dy, radius, colony[key] ?? 0, { label, time: t, reveal: seg(t, 1.6 + i * 0.08, 2.6 + i * 0.08) })
+    const dialsTop = card.y + M.headH
+    COLONY_INDICATORS.forEach(({ key, label, short }, i) => {
+      const row = Math.floor(i / M.perRow)
+      const col = i % M.perRow
+      const dx = card.x + 16 + M.slot * (col + 0.5)
+      const dy = dialsTop + M.radius + 7 + row * M.rowH
+      drawDial(ctx, dx, dy, M.radius, colony[key] ?? 0, {
+        label,
+        shortLabel: short,
+        time: t,
+        labelSize: M.labelSize,
+        labelMaxWidth: M.slot - 6,
+        reveal: seg(t, 1.6 + i * 0.08, 2.6 + i * 0.08),
+      })
     })
 
-    ctx.save()
-    ctx.globalAlpha = 0.45 * seg(t, MIN_TIME, MIN_TIME + 0.8)
-    ctx.fillStyle = UI.ink
-    ctx.font = font(12, { style: 'italic' })
-    ctx.textAlign = 'right'
-    ctx.fillText('clique para voltar ao menu', w - 20, h - 16)
-    ctx.restore()
+    const ready = seg(t, MIN_TIME, MIN_TIME + 0.8)
+    if (ready > 0) {
+      ctx.save()
+      ctx.globalAlpha = ready
+      drawButton(ctx, M.btn, 'Voltar ao menu', { focused: true, accent: false, time: t })
+      ctx.restore()
+      drawHint(ctx, M.L, continueHint(context, 'voltar ao menu'), ready)
+    }
 
     fadeScreen(ctx, w, h, (1 - seg(t, 0, 0.8)) * 0.9, UI.paper)
   },
