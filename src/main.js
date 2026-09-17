@@ -1,4 +1,5 @@
 import Renderer from './engine/Renderer.js'
+import { inject } from '@vercel/analytics'
 import InputManager from './engine/InputManager.js'
 import StateMachine from './engine/StateMachine.js'
 import { create as createLoop } from './engine/GameLoop.js'
@@ -18,6 +19,8 @@ import FeedQueenTask from './states/tasks/FeedQueenTask.js'
 import GuardTask from './states/tasks/GuardTask.js'
 import NightState from './states/NightState.js'
 import { t as tr } from './i18n/index.js'
+
+inject()
 
 const renderer = new Renderer('#game-canvas')
 installViewportGuards(renderer.canvas)
@@ -59,12 +62,14 @@ const loop = createLoop({
     if (context.saveFailed) {
       const ctx = renderer.getContext()
       ctx.save()
+      // Fundo cobre a área do notch; o texto fica abaixo da safe area de topo.
+      const top = Math.max(0, context.layout.safe?.top ?? 0)
       ctx.fillStyle = '#EFE8D6'
-      ctx.fillRect(0, 0, renderer.width, 30)
+      ctx.fillRect(0, 0, renderer.width, top + 30)
       ctx.fillStyle = '#2B2418'
       ctx.textAlign = 'center'
       ctx.font = '12px Georgia, serif'
-      ctx.fillText(tr('app.saveFailed'), renderer.width / 2, 20)
+      ctx.fillText(tr('app.saveFailed'), renderer.width / 2, top + 20)
       ctx.restore()
     }
   },
@@ -77,13 +82,23 @@ const onVisibilityChange = () => {
     controls.reset()
     audio.suspend()
   } else {
-    audio.resume()
+    // Se o navegador exigir novo gesto para retomar, volta a escutar os gestos.
+    void audio.resume().then((running) => { if (!running) addUnlockListeners() })
     loop.start()
   }
 }
-const unlockAudio = () => { void audio.unlock() }
-window.addEventListener('pointerdown', unlockAudio)
-window.addEventListener('keydown', unlockAudio)
+// iOS Safari só libera AudioContext.resume() em touchend/click; os demais cobrem desktop/Android.
+const UNLOCK_EVENTS = ['pointerdown', 'touchend', 'click', 'keydown']
+const unlockAudio = () => {
+  void audio.unlock().then((running) => { if (running) removeUnlockListeners() })
+}
+function addUnlockListeners() {
+  for (const name of UNLOCK_EVENTS) window.addEventListener(name, unlockAudio, { passive: true })
+}
+function removeUnlockListeners() {
+  for (const name of UNLOCK_EVENTS) window.removeEventListener(name, unlockAudio, { passive: true })
+}
+addUnlockListeners()
 document.addEventListener('visibilitychange', onVisibilityChange)
 loop.start()
 if (import.meta.hot) import.meta.hot.dispose(() => {
@@ -91,7 +106,6 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   input.destroy()
   renderer.destroy()
   audio.dispose()
-  window.removeEventListener('pointerdown', unlockAudio)
-  window.removeEventListener('keydown', unlockAudio)
+  removeUnlockListeners()
   document.removeEventListener('visibilitychange', onVisibilityChange)
 })

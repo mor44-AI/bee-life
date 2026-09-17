@@ -78,6 +78,7 @@ function computeLayout(context, ctx) {
   // Altura fixa (sem o emblema) -> o emblema fica com o espaço que sobra.
   const fixed = 16 * u + titleSize + titleSize * 0.85 + (subLines.length - 1) * subLH + 22 * u + 16 * u + cardH + 16 * u
   const avail = btn.y - S.y - fixed
+  if (avail < 34 * 3.3 && S.w > S.h) return computeLowLayout(context, ctx, L, S, u, cx)
   const R = clamp(avail / 3.3, 34, Math.min(S.w * 0.2, 120))
   const cy = S.y + 12 * u + R * 1.6
   const titleY = cy + R * 1.6 + titleSize * 0.9
@@ -85,7 +86,57 @@ function computeLayout(context, ctx) {
   const cardY = Math.min(btn.y - cardH - 14 * u, ulY + 20 * u)
   const card = { x: cx - cardW / 2, y: cardY, w: cardW, h: cardH }
 
-  return { L, S, u, cx, cy, R, titleSize, subSize, subLH, subLines, titleY, ulY, card, narrow, perRow, slot, radius, rowH, headH, labelSize, btn }
+  return { L, S, u, cx, cy, R, titleX: cx, titleW: S.w - 24, titleSize, subSize, subLH, subLines, titleY, ulY, card, narrow, perRow, slot, radius, rowH, headH, labelSize, btn, side: false }
+}
+
+// Tela deitada e baixa (celular deitado, 800×450): título e subtítulo no topo; embaixo,
+// cartão (mostradores em 1 linha) à esquerda e emblema + botão + dica à direita.
+function computeLowLayout(context, ctx, L, S, u, cx) {
+  const titleSize = clamp(S.h * 0.1, 24, 36)
+  const subSize = Math.max(13.5, 15 * u)
+  const subLH = subSize * 1.3
+  ctx.save()
+  ctx.font = font(subSize, { style: 'italic' })
+  const subLines = wrapText(ctx, tr(SUBTITLE_KEY[reason]), Math.min(640, S.w - 48))
+  ctx.restore()
+  const titleY = S.y + 10 * u + titleSize * 0.9
+  const ulY = titleY + titleSize * 0.8 + (subLines.length - 1) * subLH + 13 * u
+  const top = ulY + 10 * u
+  const bottom = S.y + S.h - 8 * u
+
+  const colW = clamp(S.w * 0.3, 190, 280)
+  const gap = 16 * u
+  const cardW = Math.min(640, S.w - 24 - colW - gap)
+  const narrow = cardW < 520
+  const perRow = 6
+  const slot = (cardW - 32) / perRow
+  const labelSize = 12 * u
+  const radius = clamp(slot * 0.2, 15, 22 * u)
+  const rowH = radius * 2 + 16 + labelSize * 1.25 + 8 * u
+  const headH = narrow ? 88 * u : 66 * u
+  const cardH = headH + rowH * Math.ceil(COLONY_INDICATORS.length / perRow) + 6 * u
+  const cardX = S.x + 12
+  const card = { x: cardX, y: top + Math.max(0, (bottom - top - cardH) / 2), w: cardW, h: cardH }
+
+  const colX = cardX + cardW + gap
+  const colCx = colX + colW / 2
+  const hintSize = 12.5 * u
+  ctx.save()
+  ctx.font = font(hintSize, { style: 'italic' })
+  const hintLines = wrapText(ctx, tr(isTouchUI(context) ? 'end.tapHint' : 'end.clickHint'), colW - 8).slice(0, 2)
+  ctx.restore()
+  const hintLH = hintSize * 1.3
+  const btnH = Math.max(L.minTouch ?? 56, Math.round(60 * u))
+  const btn = { x: colX, y: bottom - hintLines.length * hintLH - 6 * u - btnH, w: colW, h: btnH }
+  const emblemTop = top
+  const emblemH = btn.y - 8 * u - emblemTop
+  const R = clamp(emblemH / 3.2, 18, Math.min(colW * 0.3, 90))
+  const cy = emblemTop + emblemH / 2
+
+  return {
+    L, S, u, cx: colCx, cy, R, titleX: S.x + S.w / 2, titleW: S.w - 24, titleSize, subSize, subLH, subLines, titleY, ulY,
+    card, narrow, perRow, slot, radius, rowH, headH, labelSize, btn, side: true, hintLines, hintSize, hintLH,
+  }
 }
 
 export default {
@@ -164,19 +215,19 @@ export default {
     ctx.fillStyle = UI.ink
     ctx.globalAlpha = seg(t, 0.6, 1.5)
     const title = tr(completed ? 'end.completedTitle' : 'end.lifeOverTitle')
-    fitSize(ctx, title, M.S.w - 24, M.titleSize, 18)
-    ctx.fillText(title, cx, M.titleY)
+    fitSize(ctx, title, M.titleW, M.titleSize, 18)
+    ctx.fillText(title, M.titleX, M.titleY)
     ctx.globalAlpha = 0.88 * seg(t, 1.0, 2.0)
     ctx.font = font(M.subSize, { style: 'italic' })
-    M.subLines.forEach((line, i) => ctx.fillText(line, cx, M.titleY + M.titleSize * 0.85 + i * M.subLH))
+    M.subLines.forEach((line, i) => ctx.fillText(line, M.titleX, M.titleY + M.titleSize * (M.side ? 0.8 : 0.85) + i * M.subLH))
     // Único acento rosa: filete sob o subtítulo.
     const ulW = 60 * seg(t, 1.4, 2.2)
     ctx.globalAlpha = 1
     ctx.strokeStyle = UI.pink
     ctx.lineWidth = 1.3
     ctx.beginPath()
-    ctx.moveTo(cx - ulW, M.ulY)
-    ctx.lineTo(cx + ulW, M.ulY)
+    ctx.moveTo(M.titleX - ulW, M.ulY)
+    ctx.lineTo(M.titleX + ulW, M.ulY)
     ctx.stroke()
     ctx.restore()
 
@@ -231,7 +282,18 @@ export default {
       ctx.globalAlpha = ready
       drawButton(ctx, M.btn, tr('end.backToMenu'), { focused: true, accent: false, time: t })
       ctx.restore()
-      drawHint(ctx, M.L, tr(isTouchUI(context) ? 'end.tapHint' : 'end.clickHint'), ready)
+      if (M.side) {
+        ctx.save()
+        ctx.globalAlpha = 0.7 * ready
+        ctx.fillStyle = UI.ink
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'alphabetic'
+        ctx.font = font(M.hintSize, { style: 'italic' })
+        M.hintLines.forEach((line, i) => ctx.fillText(line, M.btn.x + M.btn.w / 2, M.btn.y + M.btn.h + 6 * u + M.hintSize + i * M.hintLH))
+        ctx.restore()
+      } else {
+        drawHint(ctx, M.L, tr(isTouchUI(context) ? 'end.tapHint' : 'end.clickHint'), ready)
+      }
     }
 
     fadeScreen(ctx, w, h, (1 - seg(t, 0, 0.8)) * 0.9, UI.paper)

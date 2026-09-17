@@ -517,12 +517,13 @@ function ensureLayout(context) {
   refreshButtons(context)
   if (st.L && st.L.key === key) return
   const dpr = context.renderer?.dpr || (typeof window !== 'undefined' && window.devicePixelRatio) || 1
-  const oldBusy = st.L ? new Map(st.L.routes.map((r) => [r.name, r.busy])) : null
+  const oldS = st.L ? st.L.s : null
   st.L = computeLayout(w, h, UL)
   // rotas cujo caminho passa sob os botões virtuais ficam fora (sobram >= 2)
   const clear = st.L.routes.filter((r) => pathClear(r.path, 30 * st.L.s))
   if (clear.length >= 2) st.L.routes = clear
-  if (oldBusy) st.L.routes.forEach((r) => { r.busy = oldBusy.get(r.name) || 0 })
+  // colunas em andamento seguem para as rotas novas (senão iriam até a entrada antiga)
+  if (oldS != null) reprojectColumns(st.L.s / oldS)
   st.dpr = dpr
   st.sprites = new Map()
   st.bg = buildStatic(st.L, dpr)
@@ -661,15 +662,67 @@ function spawnAntColumn(route, T) {
     gap: T.antGap * rand(0.92, 1.12),
     spawner: null,
   }
-  col.spawner = createPatternSpawner({
-    pattern: 'file', path: route.path, speed: T.antSpeed * s, spawnRate: 0, maxEntities: 12,
+  col.speed = T.antSpeed * s
+  col.spawner = makeColumnSpawner(route.path, col.speed)
+  route.busy++
+  st.cols.push(col)
+}
+
+function makeColumnSpawner(path, speed) {
+  return createPatternSpawner({
+    pattern: 'file', path, speed, spawnRate: 0, maxEntities: 12,
     onExit: (e) => {
       e.dead = true
       breach(e.x, e.y, 'ant')
     },
   })
-  route.busy++
-  st.cols.push(col)
+}
+
+function pathLengths(path) {
+  const acc = [0]
+  for (let i = 1; i < path.length; i++) acc.push(acc[i - 1] + Math.hypot(path[i].x - path[i - 1].x, path[i].y - path[i - 1].y))
+  return acc
+}
+
+// Resize/rotação: cada coluna passa para a rota de mesmo nome (ou a de ângulo mais
+// próximo) do layout novo e suas formigas são reprojetadas na mesma fração do caminho.
+function reprojectColumns(speedScale) {
+  const routes = st.L.routes
+  for (const r of routes) r.busy = 0
+  for (const c of st.cols) {
+    const oldPath = c.route.path
+    const route = routes.find((r) => r.name === c.route.name) ||
+      routes.slice().sort((a, b) => Math.abs(angDiff(a.angle, c.route.angle)) - Math.abs(angDiff(b.angle, c.route.angle)))[0]
+    const oldAcc = pathLengths(oldPath)
+    const oldTotal = oldAcc[oldAcc.length - 1] || 1
+    const acc = pathLengths(route.path)
+    const total = acc[acc.length - 1]
+    const oldSpawner = c.spawner
+    c.speed *= speedScale
+    c.spawner = makeColumnSpawner(route.path, c.speed)
+    c.route = route
+    route.busy++
+    for (const e of oldSpawner.entities) {
+      const i = Math.min(e._pathIndex, oldPath.length - 2)
+      const a = oldPath[i]
+      const frac = clamp((oldAcc[i] + Math.hypot(e.x - a.x, e.y - a.y)) / oldTotal, 0, 1)
+      const d = frac * total
+      let j = 0
+      while (j < acc.length - 2 && acc[j + 1] < d) j++
+      const seg = Math.max(1e-6, acc[j + 1] - acc[j])
+      const k = clamp((d - acc[j]) / seg, 0, 1)
+      const p0 = route.path[j]
+      const p1 = route.path[j + 1]
+      e.x = lerp(p0.x, p1.x, k)
+      e.y = lerp(p0.y, p1.y, k)
+      e.px = e.x
+      e.py = e.y
+      e._pathIndex = j
+      e._done = false
+      e.rot = Math.atan2(p1.y - p0.y, p1.x - p0.x)
+      c.spawner.entities.push(e)
+    }
+  }
 }
 
 function spawnIntruderGroup(T) {

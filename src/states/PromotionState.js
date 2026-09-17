@@ -89,6 +89,99 @@ function drawRoleDiagram(ctx, cx, cy, R, rank, progress, time) {
   ctx.restore()
 }
 
+
+// Corta as linhas em `max`, terminando a última com "…" (sem estourar a largura).
+function clampLines(ctx, lines, max, maxW) {
+  if (lines.length <= max) return lines
+  const out = lines.slice(0, max)
+  let last = out[max - 1].replace(/[\s,.;:-]*$/, '') + '…'
+  while (ctx.measureText(last).width > maxW && last.includes(' ')) {
+    last = last.replace(/\s*\S+…$/, '').replace(/[\s,.;:-]*$/, '') + '…'
+  }
+  out[max - 1] = last
+  return out
+}
+
+// Mede o bloco de texto (rótulo, nome, nota) centrado em x a partir de `top`.
+// maxBottom: se dado, a nota encolhe (até 13px) e termina com "…" para caber.
+function measureText(ctx, u, x, top, maxW, nameSizeMax, maxBottom) {
+  ctx.save()
+  let nameSize = nameSizeMax
+  ctx.font = font(nameSize)
+  while (nameSize > 22 && ctx.measureText(roleName(to)).width > maxW) {
+    nameSize -= 1
+    ctx.font = font(nameSize)
+  }
+  const labelY = top + 12.5 * u
+  const nameY = labelY + nameSize * 1.1
+  const note = roleNote(to)
+  let noteSize = 16 * u
+  let noteLines = []
+  const noteYFor = (size) => nameY + 14 * u + size
+  if (note) {
+    const noteW = Math.min(520, maxW - 16)
+    for (;;) {
+      ctx.font = font(noteSize, { style: 'italic' })
+      noteLines = wrapText(ctx, note, noteW)
+      const fits = maxBottom == null || noteYFor(noteSize) + (noteLines.length - 1) * noteSize * 1.375 + 5 * u <= maxBottom
+      if (fits || noteSize <= 13) break
+      noteSize -= 0.5
+    }
+    if (maxBottom != null) {
+      const max = Math.max(1, Math.floor((maxBottom - 5 * u - noteYFor(noteSize)) / (noteSize * 1.375)) + 1)
+      noteLines = clampLines(ctx, noteLines, max, noteW)
+    }
+  }
+  ctx.restore()
+  const noteLH = noteSize * 1.375
+  const noteY = noteYFor(noteSize)
+  const bottom = (noteLines.length ? noteY + (noteLines.length - 1) * noteLH : nameY) + 6 * u
+  return { x, labelY, nameY, nameSize, noteY, noteSize, noteLH, noteLines, bottom }
+}
+
+function computeLayout(context, ctx) {
+  const L = screenLayout(context)
+  const S = safeRect(L)
+  const u = uiScaleOf(L)
+  const portrait = S.h >= S.w
+  const btnH = Math.max(L.minTouch ?? 56, Math.round(60 * u))
+
+  // Empilhado (vertical primeiro): diagrama, texto e botão na zona do polegar.
+  {
+    const R = portrait ? Math.max(60, Math.min(S.w * 0.22, S.h * 0.14)) : Math.max(60, Math.min(S.w * 0.2, S.h * 0.2))
+    const cx = S.x + S.w / 2
+    const cy = S.y + Math.max(S.h * (portrait ? 0.37 : 0.4), R * 1.3 + 34 * u + 26 * u)
+    const btnW = Math.min(360, S.w - 40)
+    const btn = { x: cx - btnW / 2, y: S.y + S.h - btnH - 40 * u, w: btnW, h: btnH }
+    const top = cy + R * 1.18 + 9.5 * u
+    const nameSize = Math.max(28, Math.min(52, S.w * (portrait ? 0.1 : 0.06)))
+    const base = { L, S, u, R, cx, cy, btn, side: false, diagX: S.x, diagW: S.w }
+    if (portrait) return { ...base, text: measureText(ctx, u, cx, top, S.w - 32, nameSize, btn.y - 8 * u) }
+    const probe = measureText(ctx, u, cx, top, S.w - 32, nameSize, null)
+    if (probe.bottom <= btn.y - 8 * u) return { ...base, text: probe }
+  }
+
+  // Tela deitada e baixa: diagrama à esquerda; nome, nota, botão e dica à direita.
+  const diagW = S.w * 0.48
+  const R = Math.max(40, Math.min(diagW * 0.19, (S.h - 16 - 25 * u) / 2.3, 150))
+  const cx = S.x + diagW / 2
+  const cy = S.y + (S.h - (2.3 * R + 25 * u)) / 2 + 1.3 * R + 25 * u
+  const colX = S.x + diagW + 8
+  const colW = S.x + S.w - 16 - colX
+  const colCx = colX + colW / 2
+  const hintSize = 13.5 * u
+  const btnW = Math.min(360, colW)
+  const tail = 14 * u + btnH + 8 * u + hintSize
+  const maxBottom = S.y + S.h - 10 * u - tail
+  const nameSize = Math.max(26, Math.min(48, colW * 0.12))
+  let text = measureText(ctx, u, colCx, S.y + 8 * u, colW, nameSize, maxBottom)
+  const offset = Math.max(0, (maxBottom - text.bottom) / 2)
+  if (offset > 0) text = measureText(ctx, u, colCx, S.y + 8 * u + offset, colW, nameSize, maxBottom)
+  const btn = { x: colCx - btnW / 2, y: text.bottom + 14 * u, w: btnW, h: btnH }
+  const hintY = btn.y + btnH + 8 * u + hintSize
+  return { L, S, u, R, cx, cy, btn, text, side: true, hintSize, hintY, diagX: S.x, diagW }
+}
+
 export default {
   enter(context, data = {}) {
     t = 0
@@ -109,17 +202,8 @@ export default {
     const w = context.width
     const h = context.height
     backdrop.draw(ctx, 0, 0, w, h)
-    const L = screenLayout(context)
-    const S = safeRect(L)
-    const u = uiScaleOf(L)
-    const portrait = S.h >= S.w
-
-    const R = portrait ? Math.max(60, Math.min(S.w * 0.22, S.h * 0.14)) : Math.max(60, Math.min(S.w * 0.2, S.h * 0.2))
-    const cx = S.x + S.w / 2
-    const cy = S.y + Math.max(S.h * (portrait ? 0.37 : 0.4), R * 1.3 + 34 * u + 26 * u)
-    const btnH = Math.max(L.minTouch ?? 56, Math.round(60 * u))
-    const btnW = Math.min(360, S.w - 40)
-    const btn = { x: cx - btnW / 2, y: S.y + S.h - btnH - 40 * u, w: btnW, h: btnH }
+    const M = computeLayout(context, ctx)
+    const { L, u, R, cx, cy, btn } = M
 
     drawGuideLine(ctx, cx - R * 1.9, cy, cx + R * 1.9, cy, { alpha: 0.16 })
     drawGuideLine(ctx, cx, cy - R * 1.6, cx, cy + R * 1.2, { alpha: 0.12 })
@@ -154,14 +238,14 @@ export default {
       setLetterSpacing(ctx, 1)
       const short = rank === 'feedQueen' ? tr('promotion.shortFeedQueen') : roleName(rank).toUpperCase()
       // Rótulos longos (inglês) encolhem para não invadir o vizinho na tela estreita.
-      const maxLabelW = Math.max(60, S.w / 3.2)
+      const maxLabelW = Math.max(60, M.diagW / 3.2)
       while (labelSize > 8.5 && ctx.measureText(short).width > maxLabelW) {
         labelSize -= 0.5
         ctx.font = font(labelSize)
       }
-      // Rótulos nunca saem da área segura (tela estreita).
+      // Rótulos nunca saem da área do diagrama (área segura / coluna esquerda).
       const half = ctx.measureText(short).width / 2
-      const lx = Math.max(S.x + 8 + half, Math.min(S.x + S.w - 8 - half, cx + Math.cos(a) * (PR + 22) * 1.12))
+      const lx = Math.max(M.diagX + 8 + half, Math.min(M.diagX + M.diagW - 8 - half, cx + Math.cos(a) * (PR + 22) * 1.12))
       const ly = cy + Math.sin(a) * (PR + 18 * u)
       ctx.fillText(short, lx, ly)
       setLetterSpacing(ctx, 0)
@@ -190,7 +274,7 @@ export default {
     drawBeeBody(ctx, createIdlePose(cx - scale * 1.5, cy + scale * 2, { t, colorVariant: colorVariantFor(to), scale, rotation: -0.2, seed: 9 }))
 
     // Textos.
-    const baseY = cy + R * 1.18
+    const T = M.text
     ctx.save()
     ctx.textAlign = 'center'
     ctx.textBaseline = 'alphabetic'
@@ -198,27 +282,16 @@ export default {
     ctx.globalAlpha = 0.75 * seg(t, T_NAME - 0.5, T_NAME + 0.3)
     ctx.font = font(12.5 * u)
     setLetterSpacing(ctx, 3)
-    ctx.fillText(tr('promotion.newRole'), cx, baseY + 22 * u)
+    ctx.fillText(tr('promotion.newRole'), T.x, T.labelY)
     setLetterSpacing(ctx, 0)
     const np2 = seg(t, T_NAME, T_NAME + 0.8)
     ctx.globalAlpha = np2
-    let nameSize = Math.max(28, Math.min(52, S.w * (portrait ? 0.1 : 0.06)))
-    ctx.font = font(nameSize)
-    while (nameSize > 22 && ctx.measureText(roleName(to)).width > S.w - 32) {
-      nameSize -= 1
-      ctx.font = font(nameSize)
-    }
-    const nameY = baseY + 22 * u + nameSize * 1.1
-    ctx.fillText(roleName(to), cx, nameY + (1 - np2) * 6)
-    const note = roleNote(to)
-    if (note) {
+    ctx.font = font(T.nameSize)
+    ctx.fillText(roleName(to), T.x, T.nameY + (1 - np2) * 6)
+    if (T.noteLines.length) {
       ctx.globalAlpha = 0.88 * seg(t, T_NAME + 0.5, T_NAME + 1.2)
-      ctx.font = font(16 * u, { style: 'italic' })
-      const lh = 22 * u
-      const maxLines = Math.max(1, Math.floor((btn.y - 12 * u - (nameY + 30 * u)) / lh) + 1)
-      wrapText(ctx, note, Math.min(520, S.w - 48))
-        .slice(0, maxLines)
-        .forEach((line, i) => ctx.fillText(line, cx, nameY + 30 * u + i * lh))
+      ctx.font = font(T.noteSize, { style: 'italic' })
+      T.noteLines.forEach((line, i) => ctx.fillText(line, T.x, T.noteY + i * T.noteLH))
     }
     ctx.restore()
 
@@ -228,7 +301,20 @@ export default {
       ctx.globalAlpha = ready
       drawButton(ctx, btn, tr('promotion.continue'), { focused: true, time: t, accent: false })
       ctx.restore()
-      drawHint(ctx, L, tr(isTouchUI(context) ? 'app.tapToContinue' : 'app.clickToContinue'), ready)
+      const hint = tr(isTouchUI(context) ? 'app.tapToContinue' : 'app.clickToContinue')
+      if (M.side) {
+        // Dica sob o botão, na coluna direita (a dica central cairia entre as colunas).
+        ctx.save()
+        ctx.globalAlpha = 0.7 * ready
+        ctx.fillStyle = UI.ink
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'alphabetic'
+        ctx.font = font(M.hintSize, { style: 'italic' })
+        ctx.fillText(hint, btn.x + btn.w / 2, M.hintY)
+        ctx.restore()
+      } else {
+        drawHint(ctx, L, hint, ready)
+      }
     }
   },
 

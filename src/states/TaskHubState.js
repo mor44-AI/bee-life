@@ -92,33 +92,49 @@ function computeLayout(context) {
   const L = screenLayout(context)
   const S = safeRect(L)
   const u = uiScaleOf(L)
-  const hudW = Math.min(1100, S.w - 24)
-  const hudH = getHUDHeight(hudW, L.uiScale)
-  const hudBottom = S.y + 10 + hudH
-  const wide = S.w >= 720 && S.w > S.h
+  let hudW = Math.min(1100, S.w - 24)
+  let hudH = getHUDHeight(hudW, L.uiScale)
+  let hudX = S.x + (S.w - hudW) / 2
   const btnH = Math.max(L.minTouch ?? 56, Math.round(66 * u))
   const margin = 16 * u
+  // Tela deitada e baixa (celular deitado): o HUD compacto ocupa quase toda a altura,
+  // então ele vai para a coluna esquerda e fato + botão para a direita.
+  const minFactH = 96
+  const stacked = S.y + 10 + hudH + 12 * u + minFactH + 12 * u + btnH + margin <= S.y + S.h
+  const side = S.w > S.h && !stacked && S.w >= 480
+  const wide = !side && S.w >= 720 && S.w > S.h
   let btn, fact
-  if (wide) {
+  if (side) {
+    hudW = Math.round(Math.max(296, Math.min(460, S.w * 0.52)))
+    hudH = getHUDHeight(hudW, L.uiScale)
+    hudX = S.x + 12
+    const colX = hudX + hudW + 14 * u
+    const colW = S.x + S.w - 12 - colX
+    btn = { x: colX, y: S.y + S.h - btnH - 12 * u, w: colW, h: btnH }
+    const factY = S.y + 10
+    fact = { x: colX, y: factY, w: colW, h: Math.min(220 * u, btn.y - 12 * u - factY) }
+  } else if (wide) {
     const btnW = Math.min(300 * u, S.w * 0.32)
     btn = { x: S.x + S.w - btnW - 24 * u, y: S.y + S.h - btnH - 24 * u, w: btnW, h: btnH }
     const factW = Math.min(500 * u, btn.x - S.x - 48 * u)
     const factH = Math.min(140 * u, Math.max(96, S.h * 0.28))
     fact = { x: S.x + 20 * u, y: S.y + S.h - factH - 20 * u, w: factW, h: factH }
   } else {
+    const hudBottom = S.y + 10 + hudH
     const btnW = Math.min(380, S.w - 32)
     btn = { x: S.x + (S.w - btnW) / 2, y: S.y + S.h - btnH - margin, w: btnW, h: btnH }
     const factW = Math.min(520, S.w - 24)
     const factH = Math.round(Math.min(150 * u, Math.max(104, (btn.y - hudBottom) * 0.36)))
     fact = { x: S.x + (S.w - factW) / 2, y: btn.y - factH - 12 * u, w: factW, h: factH }
   }
-  const stageTop = hudBottom
-  const stageBottom = wide ? Math.min(fact.y, btn.y) : fact.y
+  const hud = { x: hudX, y: S.y + 10, w: hudW, h: hudH }
+  const stageTop = hud.y + hudH
+  const stageBottom = side ? stageTop : wide ? Math.min(fact.y, btn.y) : fact.y
   const beeX = S.x + S.w / 2
   const beeY = stageTop + (stageBottom - stageTop) * 0.5
   const cellSize = Math.max(11, Math.min(24, Math.min(L.width, L.height) / 30))
   const beeR = Math.max(34, Math.min((stageBottom - stageTop) * 0.36, cellSize * 6.5 * u))
-  return { L, S, u, btn, fact, beeX, beeY, beeR, showBee: stageBottom - stageTop > 70 }
+  return { L, S, u, btn, fact, hud, beeX, beeY, beeR, showBee: stageBottom - stageTop > 70 }
 }
 
 function colorVariantFor(rank) {
@@ -207,7 +223,7 @@ export default {
       )
     }
 
-    drawHUD(ctx, context, { night })
+    drawHUD(ctx, context, { night, x: H.hud.x, y: H.hud.y, width: H.hud.w })
 
     // Fato real rotativo - cartão claro, tinta cheia (contraste alto sobre o papel).
     const facts = species.funFacts || []

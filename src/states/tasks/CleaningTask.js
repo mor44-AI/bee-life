@@ -507,6 +507,12 @@ function difficulty() {
   }
 }
 
+// Relógio do turno: tempo de jogo + pausas de impacto (hit-stop), para que as
+// pausas não estiquem o turno além de SHIFT_DURATION.
+function shiftClock() {
+  return st.time + (st.stopTime || 0)
+}
+
 function deliverTarget() {
   // Carregar fica mais pesado com a dificuldade, então a meta cai um pouco.
   return Math.round((15 - 3 * st.D) * config.durationScale)
@@ -769,6 +775,7 @@ export default {
       dashCd: 0,
       dashT: 0,
       hitStop: 0,
+      stopTime: 0,
       shakeT: 0,
       shakeMag: 0,
       pendingAction: false,
@@ -849,7 +856,7 @@ export default {
     const S = L.S
 
     // Fim de turno.
-    if (st.time >= SHIFT_DURATION) {
+    if (shiftClock() >= SHIFT_DURATION) {
       st.endT += dt
       st.fx.forEach((f) => { f.t += dt })
       st.fx = st.fx.filter((f) => f.t < f.dur)
@@ -874,7 +881,9 @@ export default {
     st.tallyPulse = Math.max(0, st.tallyPulse - dt)
     st.capturePulse = Math.max(0, st.capturePulse - dt)
     if (st.hitStop > 0) {
+      // o quadro inteiro fica parado: conta todo o dt no relógio do turno
       st.hitStop -= dt
+      st.stopTime += dt
       return
     }
 
@@ -1083,7 +1092,8 @@ export default {
       }
     }
     st.debris = st.debris.filter((d) => d.state !== 'out')
-    st.deliverR = dif.deliverR * S
+    // limitado ao campo: num playfield minúsculo a zona não pode cobrir tudo
+    st.deliverR = Math.min(dif.deliverR * S, Math.min(L.W, L.H) * 0.28)
     if (st.carrying) {
       const cp = st.carryPoint()
       st.carrying.x = cp.x
@@ -1283,7 +1293,7 @@ export default {
 
     renderHint(ctx, context)
 
-    if (st.time >= SHIFT_DURATION) {
+    if (shiftClock() >= SHIFT_DURATION) {
       const k = clamp(st.endT / END_FADE, 0, 1)
       ctx.save()
       ctx.fillStyle = `rgba(26, 20, 16, ${0.7 * ease(k, 'easeInOutQuad')})`
@@ -1682,9 +1692,10 @@ function renderHud(ctx, context) {
   const t = st.time
   const cream = PAL.paperCreamLight
   const reveal = ease(clamp(t / 1.2, 0, 1), 'easeInOutCubic')
-  const p = clamp(t / SHIFT_DURATION, 0, 1)
-  const remaining = Math.max(0, Math.ceil(SHIFT_DURATION - t))
-  const lastSecs = SHIFT_DURATION - t < 10 && t < SHIFT_DURATION
+  const clock = shiftClock()
+  const p = clamp(clock / SHIFT_DURATION, 0, 1)
+  const remaining = Math.max(0, Math.ceil(SHIFT_DURATION - clock))
+  const lastSecs = SHIFT_DURATION - clock < 10 && clock < SHIFT_DURATION
   const cy = hb.y + hb.h / 2
 
   ctx.save()

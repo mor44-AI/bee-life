@@ -16,13 +16,13 @@ No celular, use arraste e os controles na tela. A limpeza mantém a dica textual
 ## Regras atuais
 
 - Quatro fases: limpeza, alimentar larvas, alimentar rainha, defesa.
-- Cada fase tem exatamente três turnos de 42 segundos, seguidos de uma breve transição.
+- Turnos por fase (`config.turnsPerTask`): limpeza 2, alimentar larvas 2, alimentar rainha 3, defesa 3 (10 no total); cada turno dura 42 segundos, seguido de uma breve transição.
 - A dificuldade começa em 0,57 em cada fase e aumenta nos turnos seguintes.
 - A pontuação afeta a colônia, mas não antecipa nem atrasa a promoção.
 - O nascimento é uma animação de abertura, não uma quinta fase com turnos.
 - Abertura em vídeo: `public/video/intro.mp4` (vertical 720×1280, com som, assinatura "Bee Life"; poster `public/video/intro-poster.jpg`). Toca após "Toque/Clique para começar" só na primeira visita (flag `vida-de-abelha.intro-seen.v1` no localStorage); "Ver abertura" no menu reabre. Sem o arquivo, o jogo abre direto no menu.
 - A rainha oferece janelas de alimentação mais frequentes; o especial foi preservado.
-- Salvamento local automático ao nascer e ao concluir cada turno. Recarregar durante um turno retoma o último ponto salvo, sem contabilizar o turno incompleto.
+- Salvamento local automático ao nascer, ao concluir cada turno e ao ser promovida (recarregar depois da promoção volta ao hub, sem repetir a animação). Uma partida encerrada não aparece como "Continuar". Recarregar durante um turno retoma o último ponto salvo, sem contabilizar o turno incompleto.
 
 ## Verificação
 

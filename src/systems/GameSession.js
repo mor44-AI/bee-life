@@ -5,6 +5,7 @@ import SaveSystem from './SaveSystem.js'
 import { config, difficultyFor } from '../data/config.js'
 
 const SCENES = ['birth', 'hub', 'promotion', 'night', 'end']
+
 export function readSessionSave(storage = SaveSystem) {
   const save = storage.load()
   if (![1, 2].includes(save?.version) || !RANK_ORDER.includes(save.tasks?.currentRank)
@@ -28,12 +29,20 @@ export function readSessionSave(storage = SaveSystem) {
 export function installGameSession(context, storage = SaveSystem) {
   let activeShift = null
   let night = null
-  const saveAt = (scene, data) => {
-    context.saveFailed = !storage.save({ version: 2, scene, data, tasks: context.tasks.serialize(),
-      time: context.time.serialize(), colony: context.colony.serialize() })
+  // resumeScene: cena gravada para retomada, quando difere da exibida agora.
+  const saveAt = (scene, data, resumeScene = scene) => {
+    const resumeData = resumeScene === scene ? data : undefined
+    context.saveFailed = !storage.save({ version: 2, scene: resumeScene, data: resumeData,
+      tasks: context.tasks.serialize(), time: context.time.serialize(), colony: context.colony.serialize() })
     context.goTo(scene, data)
   }
-  context.hasSave = () => !!readSessionSave(storage)
+  // A promoção já foi aplicada em tasks; retomar deve cair no hub, sem repetir a animação.
+  const showPromotion = (data) => saveAt('promotion', data, 'hub')
+  // Partida encerrada (Marco 1 concluído ou fim de vida) não é oferecida como "Continuar".
+  context.hasSave = () => {
+    const save = readSessionSave(storage)
+    return !!save && save.scene !== 'end'
+  }
   context.newGame = () => {
     activeShift = null
     night = null
@@ -44,7 +53,7 @@ export function installGameSession(context, storage = SaveSystem) {
   }
   context.continueGame = () => {
     const save = readSessionSave(storage)
-    if (!save) return context.newGame()
+    if (!save || save.scene === 'end') return context.newGame()
     activeShift = null
     night = save.scene === 'night' ? save.data : null
     context.colony = ColonyState.deserialize(save.colony)
@@ -64,7 +73,7 @@ export function installGameSession(context, storage = SaveSystem) {
     if (rank === 'larva') return context.goTo('birth')
     if (context.tasks.isTaskComplete()) {
       if (rank === 'guard') return saveAt('end', { reason: 'completed' })
-      if (context.tasks.checkPromotion()) return saveAt('promotion', { from: rank, to: context.tasks.currentRank })
+      if (context.tasks.checkPromotion()) return showPromotion({ from: rank, to: context.tasks.currentRank })
     }
     const shiftIndex = context.tasks.getCompletedShifts()
     activeShift = rank
@@ -76,7 +85,8 @@ export function installGameSession(context, storage = SaveSystem) {
     night = null
     context.time.isNight = false
     if (nextScene === 'promotion') context.audio?.playPromotion()
-    saveAt(nextScene, nextData)
+    if (nextScene === 'promotion') showPromotion(nextData)
+    else saveAt(nextScene, nextData)
   }
   context.finishShift = ({ score = 50, summary = '' } = {}) => {
     if (!activeShift) return

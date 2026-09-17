@@ -177,3 +177,55 @@ test('fim de vida e save malformado têm destino seguro', () => {
   storage.value.data = { nextScene: 'missing' }
   assert.equal(readSessionSave(storage), null)
 })
+
+test('partida encerrada não oferece Continuar e Novo Jogo recomeça', () => {
+  for (const reason of ['completed', 'lifeOver']) {
+    const { c, storage } = setup()
+    c.newGame(); c.completeBirth()
+    if (reason === 'lifeOver') {
+      c.time.maxDays = 1
+      c.startShift(); c.finishShift({ score: 20 })
+    } else {
+      for (const rank of ['cleaning', 'feedLarvae', 'feedQueen', 'guard']) {
+        for (let i = 0; i < config.turnsPerTask[rank]; i++) {
+          c.startShift(); c.finishShift({ score: 60 }); c.completeNight()
+          if (c.scene === 'promotion') c.goTo('hub')
+        }
+      }
+    }
+    if (reason === 'lifeOver') {
+      assert.equal(setup(storage).c.hasSave(), true, 'noite antes do fim ainda pode ser retomada')
+      c.completeNight()
+    }
+    assert.equal(c.scene, 'end')
+    assert.equal(c.data.reason, reason)
+    assert.equal(storage.value.scene, 'end')
+    const menu = setup(storage).c
+    assert.equal(menu.hasSave(), false)
+    menu.continueGame()
+    assert.equal(menu.scene, 'birth')
+    menu.newGame(); menu.completeBirth()
+    assert.equal(menu.time.currentDay, 1)
+    assert.equal(menu.hasSave(), true)
+  }
+})
+
+test('recarregar após a promoção volta ao hub sem repetir a animação nem contar turno', () => {
+  const { c, storage } = setup()
+  c.newGame(); c.completeBirth()
+  for (let i = 0; i < config.turnsPerTask.cleaning; i++) { c.startShift(); c.finishShift({ score: 70 }); c.completeNight() }
+  assert.equal(c.scene, 'promotion')
+  assert.deepEqual(c.data, { from: 'cleaning', to: 'feedLarvae' })
+  assert.equal(storage.value.scene, 'hub')
+  const saved = structuredClone(storage.value)
+  const reloaded = setup(storage).c
+  assert.equal(reloaded.hasSave(), true)
+  reloaded.continueGame()
+  assert.equal(reloaded.scene, 'hub')
+  assert.equal(reloaded.tasks.currentRank, 'feedLarvae')
+  assert.equal(reloaded.time.currentDay, saved.time.currentDay)
+  assert.deepEqual(reloaded.tasks.serialize(), saved.tasks)
+  reloaded.startShift()
+  assert.equal(reloaded.scene, 'feedLarvae')
+  assert.equal(reloaded.data.shiftIndex, 0)
+})

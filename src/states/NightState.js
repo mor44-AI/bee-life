@@ -41,40 +41,83 @@ export default {
     const dawn = Math.max(0, (elapsed - 2.8) / 1.7)
     ctx.fillStyle = `rgba(247,223,160,${dawn * 0.3})`
     ctx.fillRect(0, 0, w, h)
-    const cx = S.x + S.w / 2
     const compact = S.h < 480
-    const top = S.y + S.h * (compact ? 0.14 : 0.18)
-    const radius = Math.min(S.w * 0.17, S.h * 0.11, 72)
+    // Tela baixa e deitada (celular deitado): título + abelha à esquerda, cartão à direita.
+    const side = compact && S.w > S.h * 1.4
+    const leftW = side ? S.w * 0.44 : S.w
+    const cx = side ? S.x + leftW / 2 : S.x + S.w / 2
+    const top = side ? S.y + Math.max(40, S.h * 0.2) : S.y + S.h * (compact ? 0.14 : 0.18)
+    const radius = side ? Math.min(leftW * 0.25, S.h * 0.17, 72) : Math.min(S.w * 0.17, S.h * 0.11, 72)
     ctx.save()
     ctx.fillStyle = UI.ink
     ctx.textAlign = 'center'
     const heading = dawn > 0.25 ? t('night.newDay') : t('night.resting')
-    fitFont(ctx, heading, S.w - 24, Math.min(30, S.w * 0.075), 16)
+    fitFont(ctx, heading, leftW - 24, Math.min(30, leftW * 0.075, side ? 26 : 30), 16)
     ctx.fillText(heading, cx, top)
-    ctx.font = font(15, { style: 'italic' })
-    ctx.fillText(t('night.days', { from: result.oldDay ?? 1, to: context.time.currentDay }), cx, top + 27)
+    const daysLine = t('night.days', { from: result.oldDay ?? 1, to: context.time.currentDay })
+    fitFont(ctx, daysLine, leftW - 24, 15, 12, { style: 'italic' })
+    ctx.fillText(daysLine, cx, top + 27)
     const beeY = top + 38 + radius
     drawBeeBody(ctx, createIdlePose(cx, beeY, {
       t: elapsed * 0.4, scale: radius / 24, rotation: -0.12, colorVariant: 'adult', seed: 7,
     }))
-    const cardW = Math.min(540, S.w - 28)
-    const cardY = beeY + radius + 16
-    const cardH = Math.min(174, S.y + S.h - 42 - cardY)
-    drawPaperCard(ctx, cx - cardW / 2, cardY, cardW, cardH, { seed: 45 })
+    let cardX, cardY, cardW, cardH
+    if (side) {
+      cardW = Math.min(440, S.w - leftW - 28)
+      cardX = S.x + leftW + (S.w - leftW - cardW) / 2 - 6
+      const availTop = S.y + 14
+      const availBottom = S.y + S.h - 40
+      cardH = Math.min(230, availBottom - availTop)
+      cardY = availTop + (availBottom - availTop - cardH) / 2
+    } else {
+      cardW = Math.min(540, S.w - 28)
+      cardX = cx - cardW / 2
+      cardY = beeY + radius + 16
+      cardH = Math.min(174, S.y + S.h - 42 - cardY)
+    }
+    const ccx = cardX + cardW / 2
+    // Resumo: quebra em linhas; encolhe a fonte e, se ainda não couber, termina com "…".
+    const summary = result.summary || t('night.defaultSummary')
+    const avail = cardH - 76
+    let size = 14
+    let lh, lines, maxLines
+    for (;;) {
+      ctx.font = font(size, { style: 'italic' })
+      lh = Math.round(size * 1.36)
+      lines = wrapText(ctx, summary, cardW - 36)
+      maxLines = Math.max(1, Math.min(side ? 6 : 4, Math.floor(avail / lh)))
+      if (lines.length <= maxLines || size <= 12) break
+      size -= 0.5
+    }
+    if (lines.length > maxLines) {
+      lines = lines.slice(0, maxLines)
+      let last = lines[maxLines - 1].replace(/[\s,.;:\-·]*$/, '') + '…'
+      while (ctx.measureText(last).width > cardW - 36 && last.includes(' ')) {
+        last = last.replace(/\s*\S+…$/, '').replace(/[\s,.;:\-·]*$/, '') + '…'
+      }
+      lines[maxLines - 1] = last
+    }
+    if (side) {
+      // Cartão do tamanho do conteúdo, centrado na coluna.
+      const fitH = Math.max(130, 56 + lines.length * lh + 27)
+      if (fitH < cardH) {
+        cardY += (cardH - fitH) / 2
+        cardH = fitH
+      }
+    }
+    drawPaperCard(ctx, cardX, cardY, cardW, cardH, { seed: 45 })
     ctx.fillStyle = UI.ink
     const scoreLine = t('night.shiftDone', { score: Math.round(result.score ?? 0) })
     fitFont(ctx, scoreLine, cardW - 24, 19, 13)
-    ctx.fillText(scoreLine, cx, cardY + 30)
-    ctx.font = font(14, { style: 'italic' })
-    const lines = wrapText(ctx, result.summary || t('night.defaultSummary'), cardW - 36)
-    const maxLines = Math.max(1, Math.min(3, Math.floor((cardH - 76) / 19)))
-    lines.slice(0, maxLines).forEach((line, i) => ctx.fillText(line, cx, cardY + 56 + i * 19))
+    ctx.fillText(scoreLine, ccx, cardY + 30)
+    ctx.font = font(size, { style: 'italic' })
+    lines.forEach((line, i) => ctx.fillText(line, ccx, cardY + 56 + i * lh))
     const delta = result.healthChange ?? 0
     const healthLine = t('night.colonyHealth', { health: Math.round(context.colony.health), delta: `${delta >= 0 ? '+' : ''}${delta}` })
     fitFont(ctx, healthLine, cardW - 24, 14, 11)
-    ctx.fillText(healthLine, cx, cardY + cardH - 17)
+    ctx.fillText(healthLine, ccx, cardY + cardH - 17)
     fitFont(ctx, t('night.hint'), S.w - 24, 12, 10, { style: 'italic' })
-    ctx.fillText(t('night.hint'), cx, S.y + S.h - 18)
+    ctx.fillText(t('night.hint'), S.x + S.w / 2, S.y + S.h - 18)
     ctx.restore()
   },
   exit() { result = null },

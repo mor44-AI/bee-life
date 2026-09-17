@@ -133,8 +133,11 @@ function makeLayout(W, H, pf, orientation) {
   const label = 20 * S
   const cx = pf.x + pf.w / 2
   const cy = pf.y + label * 0.5 + pf.h / 2
-  const rx = portrait ? pf.w / 2 - 8 : Math.min(pf.w / 2 - 12, (pf.h / 2 - label) * 1.45)
-  const ry = portrait ? Math.min(pf.h / 2 - label, pf.w * 0.85) : pf.h / 2 - label
+  // raios mínimos: com playfield minúsculo (resize extremo) os valores brutos ficam
+  // negativos e ctx.ellipse/arc lançam exceção.
+  const minR = 24 * S
+  const rx = Math.max(minR, portrait ? pf.w / 2 - 8 : Math.min(pf.w / 2 - 12, (pf.h / 2 - label) * 1.45))
+  const ry = Math.max(minR, portrait ? Math.min(pf.h / 2 - label, pf.w * 0.85) : pf.h / 2 - label)
   const L = { W, H, pf, portrait, sidePanels: orientation === 'landscape', cx, cy, rx, ry, S, qs: 2.25 * S, ws: 1.3 * S }
   const cluster = (x, y, mirror, seed) => {
     const m = mirror ? -1 : 1
@@ -558,6 +561,15 @@ function windowFraction() {
   return w.isOpen ? clamp(1 - w.openProgress, 0, 1) : 0
 }
 
+// Tempo mínimo de boca aberta para a sequência ser humanamente possível: reação
+// inicial + ~0,4 s por direção (toque no celular). Se o jogador chega ao cone tarde
+// demais, o combo não abre e a janela não é gasta (nem a carga) - espera a próxima.
+const COMBO_REACTION = 0.45
+const COMBO_PER_INPUT = 0.4
+function comboMinTime(level) {
+  return COMBO_REACTION + comboLengthAt(level) * COMBO_PER_INPUT
+}
+
 function startCombo(level) {
   const seq = makeSequence(comboLengthAt(level))
   st.combo = {
@@ -636,6 +648,9 @@ function enter(context, data = {}) {
     t: 0,
     L: null,
     bg: null,
+    sprites: new Map(),
+    spriteDpr: 0,
+    spriteS: 0,
     queen: { x: 0, y: 0, heading: 0, mode: 'rest', modeT: 0, modeDur: 1.5, legPhase: 0, walk: 0, sway: 0, mouth: 0, fedGlow: 0, glow: 1, eggT: 4 },
     player: { x: 0, y: 0, r: 12, facing: 0, charge: MAX_CHARGE, legPhase: 0, moving: 0, refilling: false },
     attendants: [],
@@ -974,7 +989,7 @@ function update(context, dt) {
 
   // --- combo / alimentação
   if (!st.combo) {
-    if (open && st.inCone && !st.windowUsed && pl.charge >= 1 && windowRemaining() > 0.25) startCombo(level)
+    if (open && st.inCone && !st.windowUsed && pl.charge >= 1 && windowRemaining() >= comboMinTime(level)) startCombo(level)
   } else {
     const c = st.combo
     c.t += dt
@@ -1112,9 +1127,16 @@ function render(context, ctx) {
   if (!st.attendants.length) initWorld()
   const L = st.L
   // o fundo tem texto ("câmara real"): refaz se o idioma mudar
+  const dpr = context.renderer?.dpr || window.devicePixelRatio || 1
   if (!st.bg || st.bgLang !== getLang()) {
-    st.bg = buildBackground(L, context.renderer?.dpr || window.devicePixelRatio || 1)
+    st.bg = buildBackground(L, dpr)
     st.bgLang = getLang()
+  }
+  // sprites dependem da escala do layout e do DPR: refaz no resize/zoom
+  if (st.spriteDpr !== dpr || st.spriteS !== L.S) {
+    st.sprites.clear()
+    st.spriteDpr = dpr
+    st.spriteS = L.S
   }
   ctx.drawImage(st.bg, 0, 0, L.W, L.H)
 
@@ -1208,8 +1230,8 @@ function drawScatterField(ctx) {
   const inAlpha = m.isActive ? clamp(m.activeProgress * 8, 0, 1) : 0
   ctx.save()
   if (m.isActive) {
-    const rx = L.rx - 5 * L.S
-    const ry = L.ry - 5 * L.S
+    const rx = Math.max(0, L.rx - 5 * L.S)
+    const ry = Math.max(0, L.ry - 5 * L.S)
     ctx.strokeStyle = P.caterpillarGold
     ctx.globalAlpha = 0.8 * inAlpha
     ctx.lineWidth = 2.2
@@ -1226,7 +1248,7 @@ function drawScatterField(ctx) {
       const c = Math.cos(a)
       const s = Math.sin(a)
       ctx.moveTo(L.cx + c * rx, L.cy + s * ry)
-      ctx.lineTo(L.cx + c * (rx - l), L.cy + s * (ry - l))
+      ctx.lineTo(L.cx + c * Math.max(0, rx - l), L.cy + s * Math.max(0, ry - l))
     }
     ctx.stroke()
   }
@@ -1373,6 +1395,188 @@ function drawEggs(ctx) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// cache de sprites (rainha e séquito): desenhar bee.js/hachuras/estipulagem a cada
+// frame custava milhares de chamadas de canvas. Os sprites são pré-renderizados em
+// canvas offscreen no DPR atual e na escala do layout (st.sprites é limpo quando
+// algum dos dois muda) e só transformados por frame.
+// ---------------------------------------------------------------------------
+
+const QUEEN_LEG_FRAMES = 12
+const QUEEN_MOUTH_FRAMES = 9
+const QUEEN_TILT_STEP = 0.03
+const BEE_LEG_FRAMES = 8
+const BEE_BREATH_FRAMES = 3
+const BEE_WING_FRAMES = 4
+const SPRITE_CACHE_MAX = 400 // teto de memória (~20 MB); o regime estável usa ~260
+
+function bucket(v, step, n) {
+  return ((Math.round(v / step) % n) + n) % n
+}
+
+// Sprite em coordenadas locais (CSS px): retângulo [x0, x0+w] x [y0, y0+h].
+function makeSprite(key, x0, y0, w, h, draw) {
+  let s = st.sprites.get(key)
+  if (s) return s
+  if (st.sprites.size >= SPRITE_CACHE_MAX) st.sprites.clear()
+  const dpr = st.spriteDpr || 1
+  const c = document.createElement('canvas')
+  c.width = Math.max(1, Math.ceil(w * dpr))
+  c.height = Math.max(1, Math.ceil(h * dpr))
+  const g = c.getContext('2d')
+  g.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr)
+  draw(g)
+  s = { c, x0, y0, w: c.width / dpr, h: c.height / dpr }
+  st.sprites.set(key, s)
+  return s
+}
+
+function blitSprite(ctx, s) {
+  ctx.drawImage(s.c, s.x0, s.y0, s.w, s.h)
+}
+
+function queenAbdomenSprite() {
+  const qs = st.L.qs
+  const S = st.L.S
+  const x0 = -60 * qs
+  const y0 = -22 * qs
+  const w = 66 * qs
+  const h = 44 * qs
+  const outline = queenAbdomenOutline(qs, 0, 777)
+  const interior = makeSprite('qAbdIn', x0, y0, w, h, (g) => {
+    g.beginPath()
+    tracePath(g, outline, { closed: true, smooth: true })
+    const ag = g.createLinearGradient(0, -16 * qs, 0, 16 * qs)
+    ag.addColorStop(0, '#F3E6BD')
+    ag.addColorStop(0.45, '#E6D29A')
+    ag.addColorStop(1, '#BFA066')
+    g.fillStyle = ag
+    g.fill()
+    g.save()
+    g.clip()
+    // tergitos: placas escuras separadas pela membrana esticada
+    const tergites = [-5.5, -13.5, -22.5, -31.5, -40, -47.5]
+    tergites.forEach((sx, i) => {
+      const hr = abdomenHalf(sx) * 0.74 * qs
+      const tw = (3.4 - i * 0.2) * qs
+      g.beginPath()
+      g.moveTo(sx * qs - tw / 2, -hr)
+      g.quadraticCurveTo(sx * qs + tw * 0.2, -hr * 1.08, sx * qs + tw / 2, -hr * 0.92)
+      g.quadraticCurveTo(sx * qs + tw * 0.9, 0, sx * qs + tw / 2, hr * 0.92)
+      g.quadraticCurveTo(sx * qs + tw * 0.2, hr * 1.08, sx * qs - tw / 2, hr)
+      g.quadraticCurveTo(sx * qs - tw * 0.1, 0, sx * qs - tw / 2, -hr)
+      g.closePath()
+      g.fillStyle = '#6A4E2E'
+      g.globalAlpha = 0.8
+      g.fill()
+      g.globalAlpha = 1
+      // linha intersegmental na membrana
+      g.beginPath()
+      g.moveTo((sx - 4.2) * qs, -abdomenHalf(sx - 4.2) * qs)
+      g.quadraticCurveTo((sx - 3.2) * qs, 0, (sx - 4.2) * qs, abdomenHalf(sx - 4.2) * qs)
+      g.strokeStyle = withAlpha('#8A6626', 0.3)
+      g.lineWidth = 0.7
+      g.stroke()
+    })
+    drawHatching(g, { x: -55 * qs, y: -17 * qs, width: 56 * qs, height: 34 * qs }, {
+      angle: Math.PI / 2,
+      lineCount: 58,
+      color: '#5C4419',
+      opacityRange: [0.07, 0.17],
+      seed: 781,
+      curveAmount: 5 * qs,
+      segments: 6,
+    })
+    drawStipple(g, { x: -55 * qs, y: -17 * qs, width: 56 * qs, height: 34 * qs }, {
+      color: '#3B2C10',
+      count: 240,
+      seed: 782,
+      radius: [0.35, 1],
+      opacity: [0.07, 0.18],
+      densityBias: (u, v) => v * v,
+    })
+    // brilho de cutícula
+    g.strokeStyle = withAlpha(P.paperCreamLight, 0.55)
+    g.lineWidth = 2.2 * S
+    g.beginPath()
+    g.moveTo(-8 * qs, -9.5 * qs)
+    g.quadraticCurveTo(-25 * qs, -13.5 * qs, -42 * qs, -8.5 * qs)
+    g.stroke()
+    g.restore()
+  })
+  // opacidade base embutida (segmentos sobrepostos somam alfa nas juntas); o brilho
+  // variável entra como globalAlpha uniforme no blit
+  const glow = makeSprite('qAbdGlow', x0, y0, w, h, (g) => {
+    strokeHandDrawn(g, outline, { color: P.sunGold, baseWidth: 3.2 * S, widthJitter: 0.4, closed: true, seed: 790, opacity: 0.5 })
+  })
+  const ink = makeSprite('qAbdInk', x0, y0, w, h, (g) => {
+    strokeHandDrawn(g, outline, { color: INK_LINE, baseWidth: 1.9, widthJitter: 0.5, closed: true, seed: 791, opacity: 0.9 })
+  })
+  return { outline, interior, glow, ink }
+}
+
+function queenHeadSprite(li, mi, ti) {
+  const hts = st.L.qs * 0.95
+  return makeSprite(`qHead:${li}:${mi}:${ti}`, -1.3 * hts, -20 * hts, 27 * hts, 40 * hts, (g) => {
+    g.beginPath()
+    g.rect(-1.3 * hts, -40 * hts, 80 * hts, 80 * hts)
+    g.clip()
+    const pose = createIdlePose(0, 0, { t: 0, colorVariant: 'young', scale: hts, rotation: 0, seed: 1234 })
+    pose.wingAngle = 0 // asas próprias (queenWing) - as de bee.js ficam fechadas e recortadas
+    pose.legPhase = (li * TAU) / QUEEN_LEG_FRAMES
+    pose.mouthOpen = mi / (QUEEN_MOUTH_FRAMES - 1)
+    pose.headTilt = ti * QUEEN_TILT_STEP
+    pose.breathPhase = 0 // só afeta o abdômen de bee.js, que fica recortado
+    drawBeeBody(g, pose)
+  })
+}
+
+// Abelha do séquito na origem, rotação 0 (a rotação é aplicada no blit).
+function attendantSprite(a, li, bi, wi, mouth) {
+  const ws = st.L.ws
+  const key = `bee:${a.seed}:${a.variant}:${li}:${bi}:${wi}:${mouth ? 1 : 0}`
+  return makeSprite(key, -23 * ws, -19 * ws, 46 * ws, 38 * ws, (g) => {
+    const pose = createIdlePose(0, 0, { t: 0, colorVariant: a.variant, scale: ws, rotation: 0, seed: a.seed })
+    pose.wingAngle = wi === 0 ? 0.05 : (wi / (BEE_WING_FRAMES - 1)) * 0.25
+    pose.legPhase = (li * TAU) / BEE_LEG_FRAMES
+    pose.breathPhase = (bi / (BEE_BREATH_FRAMES - 1)) * 2 - 1
+    pose.headTilt = 0
+    if (mouth) pose.mouthOpen = 0.5
+    drawBeeBody(g, pose)
+  })
+}
+
+// Operária do jogador (frames em cache, como o séquito).
+const PLAYER_PULSE_FRAMES = 12
+const PLAYER_CARRY_LEVELS = 8
+function playerSprite() {
+  const pl = st.player
+  const ws = st.L.ws
+  const box = (key, build) => makeSprite(key, -23 * ws, -19 * ws, 46 * ws, 38 * ws, (g) => drawBeeBody(g, build()))
+  if (st.combo) {
+    const lt = st.t * 0.4 // legPhase de createRegurgitatePose
+    const li = bucket(lt, TAU / BEE_LEG_FRAMES, BEE_LEG_FRAMES)
+    const pi = bucket(st.t * 4, TAU / PLAYER_PULSE_FRAMES, PLAYER_PULSE_FRAMES) // pulso = sin(4t)
+    return box(`pl:r:${li}:${pi}`, () => {
+      const pose = createRegurgitatePose(0, 0, (pi * TAU) / PLAYER_PULSE_FRAMES / 4, { colorVariant: 'young', scale: ws, rotation: 0, seed: 42 })
+      pose.headTilt = 0.1
+      pose.legPhase = (li * TAU) / BEE_LEG_FRAMES
+      return pose
+    })
+  }
+  const li = bucket(pl.legPhase, TAU / BEE_LEG_FRAMES, BEE_LEG_FRAMES)
+  const bi = Math.round(((Math.sin(st.t * 1.6) + 1) / 2) * (BEE_BREATH_FRAMES - 1))
+  const ci = pl.charge > 0.15 ? 1 + Math.round(clamp(pl.charge / MAX_CHARGE, 0, 1) * (PLAYER_CARRY_LEVELS - 1)) : 0
+  return box(`pl:i:${li}:${bi}:${ci}`, () => {
+    const pose = createIdlePose(0, 0, { t: 0, colorVariant: 'young', scale: ws, rotation: 0, seed: 42 })
+    pose.legPhase = (li * TAU) / BEE_LEG_FRAMES
+    pose.breathPhase = (bi / (BEE_BREATH_FRAMES - 1)) * 2 - 1
+    pose.headTilt = 0
+    if (ci > 0) pose.carrying = { type: 'nectar', amount: 0.6 + ((ci - 1) / (PLAYER_CARRY_LEVELS - 1)) * 0.7 }
+    return pose
+  })
+}
+
 function queenAbdomenOutline(qs, breath, seed) {
   const rng = seededRandom(seed)
   const top = []
@@ -1443,91 +1647,34 @@ function drawQueen(ctx) {
     })
   }
 
-  // abdômen fisogástrico
-  const outline = queenAbdomenOutline(qs, breath, 777)
-  ctx.beginPath()
-  tracePath(ctx, outline, { closed: true, smooth: true })
-  const ag = ctx.createLinearGradient(0, -16 * qs, 0, 16 * qs)
-  ag.addColorStop(0, '#F3E6BD')
-  ag.addColorStop(0.45, '#E6D29A')
-  ag.addColorStop(1, '#BFA066')
-  ctx.fillStyle = ag
-  ctx.fill()
+  // abdômen fisogástrico (textura estática em cache; a respiração só estica em y,
+  // exatamente como queenAbdomenOutline faz com o contorno)
+  const abd = queenAbdomenSprite()
+  const by = 1 + breath * 0.035
   ctx.save()
-  ctx.clip()
-  // tergitos: placas escuras separadas pela membrana esticada
-  const tergites = [-5.5, -13.5, -22.5, -31.5, -40, -47.5]
-  tergites.forEach((sx, i) => {
-    const hr = abdomenHalf(sx) * 0.74 * qs
-    const w = (3.4 - i * 0.2) * qs
-    ctx.beginPath()
-    ctx.moveTo(sx * qs - w / 2, -hr)
-    ctx.quadraticCurveTo(sx * qs + w * 0.2, -hr * 1.08, sx * qs + w / 2, -hr * 0.92)
-    ctx.quadraticCurveTo(sx * qs + w * 0.9, 0, sx * qs + w / 2, hr * 0.92)
-    ctx.quadraticCurveTo(sx * qs + w * 0.2, hr * 1.08, sx * qs - w / 2, hr)
-    ctx.quadraticCurveTo(sx * qs - w * 0.1, 0, sx * qs - w / 2, -hr)
-    ctx.closePath()
-    ctx.fillStyle = '#6A4E2E'
-    ctx.globalAlpha = 0.8
-    ctx.fill()
-    ctx.globalAlpha = 1
-    // linha intersegmental na membrana
-    ctx.beginPath()
-    ctx.moveTo((sx - 4.2) * qs, -abdomenHalf(sx - 4.2) * qs)
-    ctx.quadraticCurveTo((sx - 3.2) * qs, 0, (sx - 4.2) * qs, abdomenHalf(sx - 4.2) * qs)
-    ctx.strokeStyle = withAlpha('#8A6626', 0.3)
-    ctx.lineWidth = 0.7
-    ctx.stroke()
-  })
-  drawHatching(ctx, { x: -55 * qs, y: -17 * qs, width: 56 * qs, height: 34 * qs }, {
-    angle: Math.PI / 2,
-    lineCount: 58,
-    color: '#5C4419',
-    opacityRange: [0.07, 0.17],
-    seed: 781,
-    curveAmount: 5 * qs,
-    segments: 6,
-  })
-  drawStipple(ctx, { x: -55 * qs, y: -17 * qs, width: 56 * qs, height: 34 * qs }, {
-    color: '#3B2C10',
-    count: 240,
-    seed: 782,
-    radius: [0.35, 1],
-    opacity: [0.07, 0.18],
-    densityBias: (u, v) => v * v,
-  })
-  // brilho de cutícula
-  ctx.strokeStyle = withAlpha(P.paperCreamLight, 0.55)
-  ctx.lineWidth = 2.2 * L.S
-  ctx.beginPath()
-  ctx.moveTo(-8 * qs, -9.5 * qs)
-  ctx.quadraticCurveTo(-25 * qs, -13.5 * qs, -42 * qs, -8.5 * qs)
-  ctx.stroke()
+  ctx.scale(1, by)
+  blitSprite(ctx, abd.interior)
   // fome crítica: cutícula acinzentada
   if (q.glow < 0.5) {
+    ctx.beginPath()
+    tracePath(ctx, abd.outline, { closed: true, smooth: true })
     ctx.fillStyle = withAlpha('#8C8574', (0.5 - q.glow) * 0.55)
-    ctx.fillRect(-56 * qs, -18 * qs, 58 * qs, 36 * qs)
+    ctx.fill()
   }
-  ctx.restore()
   if (glow > 0.05) {
-    strokeHandDrawn(ctx, outline, { color: P.sunGold, baseWidth: 3.2 * L.S, widthJitter: 0.4, closed: true, seed: 790, opacity: 0.5 * Math.min(1, glow) })
+    ctx.globalAlpha = Math.min(1, glow)
+    blitSprite(ctx, abd.glow)
+    ctx.globalAlpha = 1
   }
-  strokeHandDrawn(ctx, outline, { color: INK_LINE, baseWidth: 1.9, widthJitter: 0.5, closed: true, seed: 791, opacity: 0.9 })
-
-  // cabeça + tórax (bee.js), abdômen original recortado
-  const hts = qs * 0.95
-  ctx.save()
-  ctx.beginPath()
-  ctx.rect(-1.3 * hts, -40 * hts, 80 * hts, 80 * hts)
-  ctx.clip()
-  const twitch = q.anticip * Math.sin(t * 38) * 0.06
-  const pose = createIdlePose(0, 0, { t, colorVariant: 'young', scale: hts, rotation: 0, seed: 1234 })
-  pose.wingAngle = 0 // asas próprias (queenWing) - as de bee.js ficam fechadas e recortadas
-  pose.legPhase = q.legPhase
-  pose.mouthOpen = q.mouth
-  pose.headTilt = Math.sin(t * 0.5) * 0.04 + twitch
-  drawBeeBody(ctx, pose)
+  blitSprite(ctx, abd.ink)
   ctx.restore()
+
+  // cabeça + tórax (bee.js), abdômen original recortado - frames em cache
+  const twitch = (q.anticip || 0) * Math.sin(t * 38) * 0.06
+  const li = bucket(q.legPhase, TAU / QUEEN_LEG_FRAMES, QUEEN_LEG_FRAMES)
+  const mi = Math.round(clamp(q.mouth, 0, 1) * (QUEEN_MOUTH_FRAMES - 1))
+  const ti = clamp(Math.round((Math.sin(t * 0.5) * 0.04 + twitch) / QUEEN_TILT_STEP), -3, 3)
+  blitSprite(ctx, queenHeadSprite(li, mi, ti))
 
   // asas curtas sobre o abdômen dilatado
   for (const side of [-1, 1]) {
@@ -1568,12 +1715,16 @@ function queenWing(ctx, len, wid) {
 }
 
 function drawAttendant(ctx, a) {
-  const L = st.L
-  const pose = createIdlePose(a.x, a.y, { t: st.t + a.seed, colorVariant: a.variant, scale: L.ws, rotation: a.facing, seed: a.seed })
-  pose.legPhase = a.legPhase
-  if (a.shoving > 0) pose.wingAngle = 0.25 * Math.sin(st.t * 30)
-  if (a.rushing && !a.claiming) pose.mouthOpen = 0.5
-  drawBeeBody(ctx, pose)
+  const li = bucket(a.legPhase, TAU / BEE_LEG_FRAMES, BEE_LEG_FRAMES)
+  const breath = Math.sin((st.t + a.seed) * 1.6)
+  const bi = Math.round(((breath + 1) / 2) * (BEE_BREATH_FRAMES - 1))
+  const wi = a.shoving > 0 ? Math.round(Math.abs(Math.sin(st.t * 30)) * (BEE_WING_FRAMES - 1)) : 0
+  const spr = attendantSprite(a, li, bi, wi, a.rushing && !a.claiming)
+  ctx.save()
+  ctx.translate(a.x, a.y)
+  ctx.rotate(a.facing)
+  blitSprite(ctx, spr)
+  ctx.restore()
 }
 
 function drawPlayer(ctx) {
@@ -1598,16 +1749,11 @@ function drawPlayer(ctx) {
   }
   ctx.restore()
 
-  let pose
-  if (st.combo) {
-    pose = createRegurgitatePose(pl.x, pl.y, st.t, { colorVariant: 'young', scale: L.ws, rotation: pl.facing, seed: 42 })
-    pose.headTilt = 0.1
-  } else {
-    pose = createIdlePose(pl.x, pl.y, { t: st.t, colorVariant: 'young', scale: L.ws, rotation: pl.facing, seed: 42 })
-    pose.legPhase = pl.legPhase
-    if (pl.charge > 0.15) pose.carrying = { type: 'nectar', amount: 0.6 + (pl.charge / MAX_CHARGE) * 0.7 }
-  }
-  drawBeeBody(ctx, pose)
+  ctx.save()
+  ctx.translate(pl.x, pl.y)
+  ctx.rotate(pl.facing)
+  blitSprite(ctx, playerSprite())
+  ctx.restore()
 
   // gotas de carga (arco técnico acima-esquerda)
   const base = -Math.PI * 0.82

@@ -611,6 +611,13 @@ function makeLarva(i, D, initial) {
   return larva
 }
 
+// Célula da larva no layout atual (null se o favo não tem célula para ela -
+// telas pequenas/deitadas com muitas larvas). Larvas sem célula ficam fora do
+// turno (sem fome, sem pontuação) até um layout com espaço para elas.
+function cellOf(larva) {
+  return (S && S.layout && S.layout.slots[larva.index]) || null
+}
+
 function layoutFor(context) {
   const lay = context.layout
   if (lay && lay.width === context.width && lay.height === context.height) return lay
@@ -689,7 +696,8 @@ function hatch(larva) {
   larva.hatchAnim = 0
   larva.hunger.value = 25 + Math.random() * (10 + 10 * S.D.d)
   S.stats.hungerGenerated += larva.hunger.value
-  const cell = S.layout.slots[larva.index]
+  larva.counted = true
+  const cell = cellOf(larva)
   if (cell) S.rings.push({ x: cell.x, y: cell.y, r: cell.size * 0.4, grow: cell.size * 0.9, life: 0, max: 0.6, color: P.caterpillarCream, width: 1.2, rays: 0 })
   if (S.meter.isActive) spawnNurse(larva, 0)
 }
@@ -726,7 +734,7 @@ function activateSpecial() {
   if (S.phase !== 'play' || !S.meter.activate()) return
   let i = 0
   for (const larva of S.larvae) {
-    if (larva.state !== 'larva') continue
+    if (larva.state !== 'larva' || !cellOf(larva)) continue
     const delay = i++ * 0.07
     spawnNurse(larva, delay)
     larva.callDrop = { from: larva.hunger.value, to: larva.hunger.value * (1 - SPECIAL.drop), t: -delay - 0.45 }
@@ -739,7 +747,8 @@ function activateSpecial() {
 }
 
 function nursePosition(n, t) {
-  const c = S.layout.slots[n.larva.index]
+  const c = cellOf(n.larva)
+  if (!c) return null
   const R = c.size
   const hx = c.x + n.face * R * 0.15 + Math.sin(t * 1.7 + n.seed) * R * 0.12
   const hy = c.y - R * 0.55 + Math.sin(t * 3.1 + n.seed) * R * 0.08
@@ -791,6 +800,7 @@ function drawSpecialLayer(ctx, L, t) {
   for (const n of S.nurses) {
     if (n.t < 0) continue
     const p = nursePosition(n, t)
+    if (!p) continue
     drawNurseSilhouette(ctx, p.x, p.y, L.beeScale * 0.85, n.face, t, n.seed, 0.85 * p.a, p.flying)
   }
   if (!m.isActive) return
@@ -802,6 +812,7 @@ function drawSpecialLayer(ctx, L, t) {
   for (const larva of S.larvae) {
     if (larva.state !== 'larva') continue
     const c = L.slots[larva.index]
+    if (!c) continue
     ctx.beginPath()
     ctx.arc(c.x, c.y, c.size * 1.18, 0, TAU)
     ctx.stroke()
@@ -860,8 +871,8 @@ function handleAction() {
     return
   }
   const larva = dock.larva
-  const cell = S.layout.slots[larva.index]
-  if (larva.state !== 'larva') return
+  const cell = cellOf(larva)
+  if (!cell || larva.state !== 'larva') return
   if (!dock.tw) {
     // larva saciada: vira de lado, nada acontece
     larva.twitch = 0.6
@@ -1027,7 +1038,6 @@ export default {
         weakenEvents: 0, lost: 0, larvaTime: 0, criticalTime: 0, hungerTime: 0,
       },
     }
-    for (const l of larvae) if (l.state === 'larva') S.stats.hungerGenerated += l.hunger.value
     context.controls?.configure({ showDirections: false, showAction: true, showSpecial: true, meter, actionLabel: tr('feedLarvae.action'), specialLabel: tr('feedLarvae.special') })
     ensureLayout(context)
   },
@@ -1071,7 +1081,7 @@ export default {
     for (const n of S.nurses) {
       n.t += dt
       if (n.leave >= 0) n.leave += dt
-      if (n.larva.state === 'lost' && n.leave < 0) n.leave = 0
+      if ((n.larva.state === 'lost' || !cellOf(n.larva)) && n.leave < 0) n.leave = 0
     }
     S.nurses = S.nurses.filter((n) => n.leave < 0.7)
 
@@ -1251,12 +1261,18 @@ export default {
       larva.twitch = Math.max(0, larva.twitch - dt * 3)
       larva.weakFlash = Math.max(0, larva.weakFlash - dt * 1.2)
       larva.feedFlash = Math.max(0, larva.feedFlash - dt * 2.5)
+      // sem célula no layout atual: fica fora do turno (não choca, não sente fome)
+      if (!L.slots[larva.index]) continue
       if (larva.state === 'egg') {
         larva.hatchSoon = clamp(1 - (larva.hatchAt - S.progress) / 0.04, 0, 1)
         if (S.progress >= larva.hatchAt) hatch(larva)
         continue
       }
       if (larva.state === 'lost') continue
+      if (!larva.counted) {
+        larva.counted = true
+        S.stats.hungerGenerated += larva.hunger.value
+      }
       larva.hatchAnim = Math.min(1, larva.hatchAnim + dt * 1.8)
       // queda animada do chamado das nutrizes (conta como fome aliviada)
       if (larva.callDrop) {
@@ -1363,16 +1379,11 @@ export default {
     ctx.restore()
 
     // destino do piloto automático (toque numa célula/potes)
-    if (S.auto) {
-      let ax
-      let ay
-      let ar
-      if (S.auto.kind === 'larva') {
-        const c = L.slots[S.auto.larva.index]
-        ax = c.x; ay = c.y; ar = c.size * 1.22
-      } else {
-        ax = pot.x; ay = pot.y; ar = pot.zoneR * 0.6
-      }
+    const autoCell = S.auto && S.auto.kind === 'larva' ? L.slots[S.auto.larva.index] : null
+    if (S.auto && (S.auto.kind !== 'larva' || autoCell)) {
+      const ax = autoCell ? autoCell.x : pot.x
+      const ay = autoCell ? autoCell.y : pot.y
+      const ar = autoCell ? autoCell.size * 1.22 : pot.zoneR * 0.6
       ctx.save()
       ctx.strokeStyle = withAlpha(P.caterpillarCream, 0.7)
       ctx.lineWidth = 1
@@ -1412,7 +1423,7 @@ export default {
     }
 
     // anel de aproximação da janela de alimentação
-    if (dock && dock.tw && S.phase === 'play') {
+    if (dock && dock.tw && S.phase === 'play' && L.slots[dock.larva.index]) {
       const c = L.slots[dock.larva.index]
       const R = c.size
       const tw = dock.tw
