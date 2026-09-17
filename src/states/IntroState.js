@@ -8,6 +8,7 @@
 
 import { UI } from '../ui/IndicatorBar.js'
 import { anyKeyPressed, isTouchUI } from '../ui/HUD.js'
+import { t, onLangChange } from '../i18n/index.js'
 
 export const INTRO_SEEN_KEY = 'vida-de-abelha.intro-seen.v1'
 const LOAD_TIMEOUT_MS = 8000
@@ -103,16 +104,21 @@ function buildUI(context) {
   play.className = 'intro-btn intro-play'
   // Na primeira carga ainda não houve input: usa o tipo de ponteiro do aparelho.
   const touch = isTouchUI(context) || !!globalThis.matchMedia?.('(pointer: coarse)').matches
-  play.textContent = touch ? 'Toque para começar' : 'Clique para começar'
   const sub = document.createElement('p')
   sub.className = 'intro-sub'
-  sub.textContent = 'abertura com som'
   start.append(play, sub)
 
   const skip = document.createElement('button')
   skip.type = 'button'
   skip.className = 'intro-btn intro-skip'
-  skip.textContent = 'Pular'
+  const applyTexts = () => {
+    play.textContent = t(touch ? 'intro.tapToStart' : 'intro.clickToStart')
+    sub.textContent = t('intro.withSound')
+    skip.textContent = t('intro.skip')
+  }
+  applyTexts()
+  const offLang = onLangChange(applyTexts)
+  abort.signal.addEventListener('abort', offLang)
 
   root.append(style, video, start, skip)
   document.body.append(root)

@@ -17,6 +17,7 @@ import FeedLarvaeTask from './states/tasks/FeedLarvaeTask.js'
 import FeedQueenTask from './states/tasks/FeedQueenTask.js'
 import GuardTask from './states/tasks/GuardTask.js'
 import NightState from './states/NightState.js'
+import { t as tr } from './i18n/index.js'
 
 const renderer = new Renderer('#game-canvas')
 installViewportGuards(renderer.canvas)
@@ -63,7 +64,7 @@ const loop = createLoop({
       ctx.fillStyle = '#2B2418'
       ctx.textAlign = 'center'
       ctx.font = '12px Georgia, serif'
-      ctx.fillText('Não foi possível salvar neste navegador.', renderer.width / 2, 20)
+      ctx.fillText(tr('app.saveFailed'), renderer.width / 2, 20)
       ctx.restore()
     }
   },

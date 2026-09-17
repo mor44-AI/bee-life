@@ -7,7 +7,6 @@ import { ease } from '../engine/tween.js'
 import { drawCell } from '../art/hive.js'
 import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { seededRandom } from '../art/textureUtils.js'
-import { species } from '../data/species.js'
 import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpacing } from '../ui/IndicatorBar.js'
 import {
   createPaperBackdrop,
@@ -21,6 +20,7 @@ import {
   isTouchUI,
   drawHint,
 } from '../ui/HUD.js'
+import { t as tr } from '../i18n/index.js'
 
 const SKIP_KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const T_LARVA = 2.3
@@ -31,10 +31,10 @@ const T_END = 7.8
 const XFADE = 0.45
 
 const STAGES = [
-  { label: 'ovo', at: 0 },
-  { label: 'larva', at: T_LARVA },
-  { label: 'pupa', at: T_PUPA },
-  { label: 'operária', at: T_EMERGE },
+  { key: 'birth.stage.egg', at: 0 },
+  { key: 'birth.stage.larva', at: T_LARVA },
+  { key: 'birth.stage.pupa', at: T_PUPA },
+  { key: 'birth.stage.worker', at: T_EMERGE },
 ]
 
 const backdrop = createPaperBackdrop({ seed: 58 })
@@ -57,7 +57,6 @@ const pupaCache = createLayerCache((c, w, h) => {
 
 let t = 0
 let done = false
-let factText = ''
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v))
 const seg = (time, a, b, type = 'easeInOutCubic') => ease(clamp01((time - a) / (b - a)), type)
@@ -73,8 +72,6 @@ export default {
     t = 0
     done = false
     context.input.consumeClicks()
-    const first = species.laborDivision?.[0]
-    factText = first ? first.description.split(':')[0].replace(/\s+$/, '') + '.' : ''
   },
 
   update(context, dt) {
@@ -165,7 +162,7 @@ export default {
       ctx.font = font(12 * u)
       ctx.textAlign = 'center'
       setLetterSpacing(ctx, 1.5)
-      ctx.fillText('CORTE', px, py + pr + 14)
+      ctx.fillText(tr('birth.cutaway'), px, py + pr + 14)
       setLetterSpacing(ctx, 0)
       ctx.restore()
     }
@@ -242,7 +239,7 @@ export default {
       ctx.fillStyle = UI.ink
       ctx.textAlign = 'center'
       ctx.font = font((current ? 16 : 14) * u, { style: current ? '' : 'italic' })
-      ctx.fillText(s.label, sx, ly + 28 * u)
+      ctx.fillText(tr(s.key), sx, ly + 28 * u)
     })
     // marcador desliza entre estágios
     const stagePos = (() => {
@@ -271,10 +268,17 @@ export default {
     ctx.textAlign = 'center'
     ctx.fillStyle = UI.ink
     ctx.globalAlpha = tp
-    ctx.font = font(Math.max(26, Math.min(42, SA.w * 0.08)))
-    ctx.fillText('Uma nova operária', cx, Math.max(SA.y + 46, cy - lensR * 1.12 - 26))
+    const title = tr('birth.title')
+    let titleSize = Math.max(26, Math.min(42, SA.w * 0.08))
+    ctx.font = font(titleSize)
+    while (titleSize > 18 && ctx.measureText(title).width > SA.w - 24) {
+      titleSize -= 1
+      ctx.font = font(titleSize)
+    }
+    ctx.fillText(title, cx, Math.max(SA.y + 46, cy - lensR * 1.12 - 26))
     const fp = seg(t, T_EMERGE - 0.2, T_EMERGE + 0.8)
-    if (factText && fp > 0) {
+    const factText = tr('birth.fact')
+    if (fp > 0) {
       ctx.globalAlpha = fp * 0.85
       ctx.font = font(15.5 * u, { style: 'italic' })
       const lines = wrapText(ctx, factText, Math.min(520, SA.w - 48))
@@ -282,7 +286,7 @@ export default {
       lines.forEach((line, i) => ctx.fillText(line, cx, fy + i * 22 * u))
     }
     ctx.restore()
-    drawHint(ctx, L, isTouchUI(context) ? 'toque para pular' : 'clique ou Enter para pular', seg(t, 1, 2))
+    drawHint(ctx, L, tr(isTouchUI(context) ? 'app.tapToSkip' : 'app.clickToSkip'), seg(t, 1, 2))
 
     fadeScreen(ctx, w, h, (1 - seg(t, 0, 0.5)) * 0.6, UI.paper)
   },

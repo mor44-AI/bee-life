@@ -2,6 +2,16 @@ import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { drawBackground } from '../art/environment.js'
 import { UI, font } from '../ui/IndicatorBar.js'
 import { createLayerCache, drawPaperCard, wrapText, screenLayout, safeRect, anyKeyPressed } from '../ui/HUD.js'
+import { t } from '../i18n/index.js'
+
+// Encolhe a fonte até o texto caber na largura (nunca estoura em 320px).
+function fitFont(ctx, text, maxW, size, min, opts) {
+  ctx.font = font(size, opts)
+  while (size > min && ctx.measureText(text).width > maxW) {
+    size -= 0.5
+    ctx.font = font(size, opts)
+  }
+}
 
 export const NIGHT_DURATION = 4.5
 const backdrop = createLayerCache((ctx, w, h) => drawBackground(ctx, 'night', { width: w, height: h, seed: 84 }))
@@ -38,10 +48,11 @@ export default {
     ctx.save()
     ctx.fillStyle = UI.ink
     ctx.textAlign = 'center'
-    ctx.font = font(Math.min(30, S.w * 0.075))
-    ctx.fillText(dawn > 0.25 ? 'Um novo dia na colmeia' : 'A colmeia repousa', cx, top)
+    const heading = dawn > 0.25 ? t('night.newDay') : t('night.resting')
+    fitFont(ctx, heading, S.w - 24, Math.min(30, S.w * 0.075), 16)
+    ctx.fillText(heading, cx, top)
     ctx.font = font(15, { style: 'italic' })
-    ctx.fillText(`Dia ${result.oldDay ?? 1} ao dia ${context.time.currentDay}`, cx, top + 27)
+    ctx.fillText(t('night.days', { from: result.oldDay ?? 1, to: context.time.currentDay }), cx, top + 27)
     const beeY = top + 38 + radius
     drawBeeBody(ctx, createIdlePose(cx, beeY, {
       t: elapsed * 0.4, scale: radius / 24, rotation: -0.12, colorVariant: 'adult', seed: 7,
@@ -51,17 +62,19 @@ export default {
     const cardH = Math.min(174, S.y + S.h - 42 - cardY)
     drawPaperCard(ctx, cx - cardW / 2, cardY, cardW, cardH, { seed: 45 })
     ctx.fillStyle = UI.ink
-    ctx.font = font(19)
-    ctx.fillText(`Turno concluído · ${Math.round(result.score ?? 0)} pontos`, cx, cardY + 30)
+    const scoreLine = t('night.shiftDone', { score: Math.round(result.score ?? 0) })
+    fitFont(ctx, scoreLine, cardW - 24, 19, 13)
+    ctx.fillText(scoreLine, cx, cardY + 30)
     ctx.font = font(14, { style: 'italic' })
-    const lines = wrapText(ctx, result.summary || 'O trabalho da operária faz parte da vida da colônia.', cardW - 36)
+    const lines = wrapText(ctx, result.summary || t('night.defaultSummary'), cardW - 36)
     const maxLines = Math.max(1, Math.min(3, Math.floor((cardH - 76) / 19)))
     lines.slice(0, maxLines).forEach((line, i) => ctx.fillText(line, cx, cardY + 56 + i * 19))
     const delta = result.healthChange ?? 0
-    ctx.font = font(14)
-    ctx.fillText(`Saúde da colônia: ${Math.round(context.colony.health)}% (${delta >= 0 ? '+' : ''}${delta})`, cx, cardY + cardH - 17)
-    ctx.font = font(12, { style: 'italic' })
-    ctx.fillText('toque ou Enter para continuar', cx, S.y + S.h - 18)
+    const healthLine = t('night.colonyHealth', { health: Math.round(context.colony.health), delta: `${delta >= 0 ? '+' : ''}${delta}` })
+    fitFont(ctx, healthLine, cardW - 24, 14, 11)
+    ctx.fillText(healthLine, cx, cardY + cardH - 17)
+    fitFont(ctx, t('night.hint'), S.w - 24, 12, 10, { style: 'italic' })
+    ctx.fillText(t('night.hint'), cx, S.y + S.h - 18)
     ctx.restore()
   },
   exit() { result = null },

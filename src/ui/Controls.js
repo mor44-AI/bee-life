@@ -14,7 +14,8 @@
 //       meter = null             SpecialMeter (engine/SpecialMeter.js): o botão mostra a
 //                                carga em arco e pulsa em accentPink quando pronto.
 //                                Controls NÃO chama meter.update/activate - a tarefa faz.
-//       actionLabel = 'AÇÃO', specialLabel = 'ESPECIAL'
+//       actionLabel = t('controls.action'), specialLabel = t('controls.special')  (null = padrão traduzido;
+//       rótulos longos encolhem para caber no botão)
 //       touchOffsetY = 64        no toque, o alvo de movimento fica N px (× uiScale
 //                                limitado) ACIMA do dedo, para o dedo não cobrir a abelha.
 //       mouseOffsetY = 0
@@ -61,6 +62,7 @@
 
 import { styleGuide } from '../data/styleGuide.js'
 import { MIN_TOUCH, pointInRect } from './layout.js'
+import { t as tr } from '../i18n/index.js'
 
 const P = styleGuide.palettes.naturalist
 const INK = P.inkLine
@@ -82,8 +84,8 @@ const DEFAULTS = {
   showSpecial: true,
   showDirections: false,
   meter: null,
-  actionLabel: 'AÇÃO',
-  specialLabel: 'ESPECIAL',
+  actionLabel: null, // null = t('controls.action') no idioma atual
+  specialLabel: null, // null = t('controls.special')
   touchOffsetY: 64,
   mouseOffsetY: 0,
   tapMaxTime: 0.28,
@@ -350,7 +352,7 @@ export function createControls(input, opts = {}) {
         ctx.stroke()
         ctx.setLineDash([])
         for (const b of dirs) drawDirection(ctx, b, this._held.has(b.name), this.isTouch)
-        if (!this.isTouch) hintText(ctx, 'setas', cx, cy + d + dirs[0].r + 11, u)
+        if (!this.isTouch) hintText(ctx, tr('controls.key.arrows'), cx, cy + d + dirs[0].r + 11, u)
       }
 
       for (const b of buttons) {
@@ -399,6 +401,16 @@ function dial(ctx, b, pressed, isTouch) {
   return r
 }
 
+/** Fonte do rótulo do botão circular: reduz até caber em maxW (mín. 7px). */
+function fitLabel(ctx, text, size, maxW) {
+  let s = Math.round(size)
+  ctx.font = `600 ${s}px Georgia, serif`
+  while (s > 7 && ctx.measureText(text).width > maxW) {
+    s -= 0.5
+    ctx.font = `600 ${s}px Georgia, serif`
+  }
+}
+
 function hintText(ctx, text, x, y, u) {
   ctx.font = `${Math.round(10 * u)}px Georgia, serif`
   ctx.fillStyle = rgba(INK, 0.7)
@@ -424,11 +436,12 @@ function drawAction(ctx, b, o, pressed, isTouch, u) {
   ctx.lineWidth = 1.2
   ctx.stroke()
   if (r > 24) {
-    ctx.font = `600 ${Math.round(clamp(r * 0.2, 8, 12))}px Georgia, serif`
+    const label = o.actionLabel ?? tr('controls.action')
+    fitLabel(ctx, label, clamp(r * 0.2, 8, 12), r * 1.45)
     ctx.fillStyle = rgba(INK, 0.85)
-    ctx.fillText(o.actionLabel, b.x, b.y + r * 0.45)
+    ctx.fillText(label, b.x, b.y + r * 0.45)
   }
-  if (!isTouch) hintText(ctx, 'Espaço', b.x, b.y + b.r + 11, u)
+  if (!isTouch) hintText(ctx, tr('controls.key.action'), b.x, b.y + b.r + 11, u)
 }
 
 function drawSpecial(ctx, b, o, pressed, isTouch, t, u) {
@@ -511,13 +524,13 @@ function drawSpecial(ctx, b, o, pressed, isTouch, t, u) {
   ctx.stroke()
 
   if (r > 20) {
-    let label = o.specialLabel
-    if (m) label = ready ? 'PRONTO' : active ? 'ATIVO' : `${Math.floor(charge * 100)}%`
-    ctx.font = `600 ${Math.round(clamp(r * 0.22, 8, 12))}px Georgia, serif`
+    let label = o.specialLabel ?? tr('controls.special')
+    if (m) label = ready ? tr('controls.ready') : active ? tr('controls.active') : `${Math.floor(charge * 100)}%`
+    fitLabel(ctx, label, clamp(r * 0.22, 8, 12), r * 1.45)
     ctx.fillStyle = ready ? PINK : rgba(INK, 0.85)
     ctx.fillText(label, b.x, b.y + r * 0.47)
   }
-  if (!isTouch) hintText(ctx, 'E / Shift', b.x, b.y + b.r + 11, u)
+  if (!isTouch) hintText(ctx, tr('controls.key.special'), b.x, b.y + b.r + 11, u)
 }
 
 function drawDirection(ctx, b, pressed, isTouch) {

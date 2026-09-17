@@ -12,15 +12,15 @@ import { UI, font, drawScaleArc, drawDottedCircle, drawGuideLine, setLetterSpaci
 import {
   createPaperBackdrop,
   wrapText,
-  rankName,
   drawButton,
   screenLayout,
   safeRect,
   uiScaleOf,
   anyKeyPressed,
-  continueHint,
+  isTouchUI,
   drawHint,
 } from '../ui/HUD.js'
+import { t as tr } from '../i18n/index.js'
 
 const KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const T_ERASE = 1.0
@@ -30,12 +30,8 @@ const T_NEEDLE1 = 2.6
 const T_NAME = 2.5
 const T_READY = 3.6
 
-const ROLE_NOTES = {
-  cleaning: 'Limpar e preparar as células de cria para a próxima geração.',
-  feedLarvae: 'Nas Melipona, o alimento larval é depositado na célula antes da postura - e a célula é então selada.',
-  feedQueen: 'Cuidar da rainha, a mãe de toda a colônia.',
-  guard: 'Vigiar a entrada do ninho. Sem ferrão, a defesa é feita com mandíbulas, corpo e própolis.',
-}
+const roleName = (rank) => tr(`rank.${rank}`)
+const roleNote = (rank) => (['cleaning', 'feedLarvae', 'feedQueen', 'guard'].includes(rank) ? tr(`promotion.note.${rank}`) : '')
 
 const backdrop = createPaperBackdrop({ seed: 73 })
 let t = 0
@@ -153,9 +149,16 @@ export default {
       const isTo = rank === to
       ctx.globalAlpha = isTo ? 0.45 + 0.55 * seg(t, T_NEEDLE1 - 0.3, T_NEEDLE1 + 0.3) : 0.62
       ctx.fillStyle = UI.ink
-      ctx.font = font((isTo ? 13 : 11.5) * u)
+      let labelSize = (isTo ? 13 : 11.5) * u
+      ctx.font = font(labelSize)
       setLetterSpacing(ctx, 1)
-      const short = rank === 'feedQueen' ? 'ATENDENTE' : rankName(rank).toUpperCase()
+      const short = rank === 'feedQueen' ? tr('promotion.shortFeedQueen') : roleName(rank).toUpperCase()
+      // Rótulos longos (inglês) encolhem para não invadir o vizinho na tela estreita.
+      const maxLabelW = Math.max(60, S.w / 3.2)
+      while (labelSize > 8.5 && ctx.measureText(short).width > maxLabelW) {
+        labelSize -= 0.5
+        ctx.font = font(labelSize)
+      }
       // Rótulos nunca saem da área segura (tela estreita).
       const half = ctx.measureText(short).width / 2
       const lx = Math.max(S.x + 8 + half, Math.min(S.x + S.w - 8 - half, cx + Math.cos(a) * (PR + 22) * 1.12))
@@ -195,19 +198,19 @@ export default {
     ctx.globalAlpha = 0.75 * seg(t, T_NAME - 0.5, T_NAME + 0.3)
     ctx.font = font(12.5 * u)
     setLetterSpacing(ctx, 3)
-    ctx.fillText('NOVA FUNÇÃO', cx, baseY + 22 * u)
+    ctx.fillText(tr('promotion.newRole'), cx, baseY + 22 * u)
     setLetterSpacing(ctx, 0)
     const np2 = seg(t, T_NAME, T_NAME + 0.8)
     ctx.globalAlpha = np2
     let nameSize = Math.max(28, Math.min(52, S.w * (portrait ? 0.1 : 0.06)))
     ctx.font = font(nameSize)
-    while (nameSize > 22 && ctx.measureText(rankName(to)).width > S.w - 32) {
+    while (nameSize > 22 && ctx.measureText(roleName(to)).width > S.w - 32) {
       nameSize -= 1
       ctx.font = font(nameSize)
     }
     const nameY = baseY + 22 * u + nameSize * 1.1
-    ctx.fillText(rankName(to), cx, nameY + (1 - np2) * 6)
-    const note = ROLE_NOTES[to]
+    ctx.fillText(roleName(to), cx, nameY + (1 - np2) * 6)
+    const note = roleNote(to)
     if (note) {
       ctx.globalAlpha = 0.88 * seg(t, T_NAME + 0.5, T_NAME + 1.2)
       ctx.font = font(16 * u, { style: 'italic' })
@@ -223,9 +226,9 @@ export default {
     if (ready > 0) {
       ctx.save()
       ctx.globalAlpha = ready
-      drawButton(ctx, btn, 'Continuar', { focused: true, time: t, accent: false })
+      drawButton(ctx, btn, tr('promotion.continue'), { focused: true, time: t, accent: false })
       ctx.restore()
-      drawHint(ctx, L, continueHint(context), ready)
+      drawHint(ctx, L, tr(isTouchUI(context) ? 'app.tapToContinue' : 'app.clickToContinue'), ready)
     }
   },
 

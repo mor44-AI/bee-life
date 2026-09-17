@@ -46,6 +46,7 @@ import {
 import { styleGuide } from '../../data/styleGuide.js'
 import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
 import { getLayout } from '../../ui/layout.js'
+import { t as tr } from '../../i18n/index.js'
 
 const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
@@ -734,7 +735,7 @@ function activateSpecial() {
   S.stats.specials += 1
   S.callFlash = 1
   const L = S.layout
-  addFloater(L.comb.cx, L.comb.cy - L.comb.ry * 0.9, 'chamado das nutrizes', P.sunHalo)
+  addFloater(L.comb.cx, L.comb.cy - L.comb.ry * 0.9, tr('feedLarvae.nurseCall'), P.sunHalo)
 }
 
 function nursePosition(n, t) {
@@ -870,7 +871,7 @@ function handleAction() {
   if (S.stock <= 0) {
     S.emptyFlash = 1
     S.shake = Math.max(S.shake, 3)
-    addFloater(bee.x, bee.y - 30 * S.layout.beeScale, 'sem alimento - potes', P.caterpillarCream)
+    addFloater(bee.x, bee.y - 30 * S.layout.beeScale, tr('feedLarvae.noFood'), P.caterpillarCream)
     dock.lockTimer = 0.35
     return
   }
@@ -888,7 +889,7 @@ function handleAction() {
     S.shake = Math.max(S.shake, 6)
     S.wasteFlash = 1
     larva.twitch = 1
-    addFloater(cell.x, cell.y - R * 1.2, 'desperdício', '#E9D9B0')
+    addFloater(cell.x, cell.y - R * 1.2, tr('feedLarvae.waste'), '#E9D9B0')
     return
   }
   const amount = result === 'perfect' ? S.D.perfectRelief : S.D.goodRelief
@@ -904,12 +905,12 @@ function handleAction() {
     S.meter.add(SPECIAL.perfectBonus)
     S.shake = Math.max(S.shake, 2.5)
     burst(cell.x, cell.y, 'perfect', R)
-    addFloater(cell.x, cell.y - R * 1.25, 'perfeito', P.sunHalo)
+    addFloater(cell.x, cell.y - R * 1.25, tr('feedLarvae.perfect'), P.sunHalo)
   } else {
     S.stats.good += 1
     S.meter.add(SPECIAL.goodBonus)
     burst(cell.x, cell.y, 'good', R)
-    addFloater(cell.x, cell.y - R * 1.2, 'bom', P.leafSageHighlight)
+    addFloater(cell.x, cell.y - R * 1.2, tr('feedLarvae.good'), P.leafSageHighlight)
   }
 }
 
@@ -937,11 +938,11 @@ function finish(context) {
   const feeds = st.perfect + st.good
   const score = computeScore(st)
   const weakened = S.larvae.filter((l) => l.everWeakened && l.state !== 'lost').length
-  let summary = `${feeds} ${feeds === 1 ? 'alimentação' : 'alimentações'} (${st.perfect} ${st.perfect === 1 ? 'perfeita' : 'perfeitas'})`
-  if (weakened === 0 && st.lost === 0) summary += ', nenhuma larva enfraquecida'
+  let summary = tr('feedLarvae.summaryFeeds', { feeds, perfect: st.perfect })
+  if (weakened === 0 && st.lost === 0) summary += tr('feedLarvae.summaryNoneWeak')
   else {
-    if (weakened > 0) summary += `, ${weakened} ${weakened === 1 ? 'larva enfraquecida' : 'larvas enfraquecidas'}`
-    if (st.lost > 0) summary += `, ${st.lost} ${st.lost === 1 ? 'larva perdida' : 'larvas perdidas'}`
+    if (weakened > 0) summary += tr('feedLarvae.summaryWeak', { n: weakened })
+    if (st.lost > 0) summary += tr('feedLarvae.summaryLost', { n: st.lost })
   }
   context.finishShift({ score, summary })
 }
@@ -1027,7 +1028,7 @@ export default {
       },
     }
     for (const l of larvae) if (l.state === 'larva') S.stats.hungerGenerated += l.hunger.value
-    context.controls?.configure({ showDirections: false, showAction: true, showSpecial: true, meter, actionLabel: 'ALIMENTAR', specialLabel: 'NUTRIZES' })
+    context.controls?.configure({ showDirections: false, showAction: true, showSpecial: true, meter, actionLabel: tr('feedLarvae.action'), specialLabel: tr('feedLarvae.special') })
     ensureLayout(context)
   },
 
@@ -1292,7 +1293,7 @@ export default {
           S.shake = Math.max(S.shake, 7)
           if (c) {
             burst(c.x, c.y, 'weak', c.size)
-            addFloater(c.x, c.y - c.size * 1.3, larva.vitality <= 0 ? 'larva perdida' : 'enfraqueceu', '#E9D9B0')
+            addFloater(c.x, c.y - c.size * 1.3, larva.vitality <= 0 ? tr('feedLarvae.larvaLost') : tr('feedLarvae.weakened'), '#E9D9B0')
           }
           if (larva.vitality <= 0) {
             larva.state = 'lost'
@@ -1603,7 +1604,7 @@ export default {
       ctx.fillStyle = INK_LINE
       ctx.textAlign = 'center'
       ctx.font = `italic ${Math.round(24 * L.fs)}px Georgia, serif`
-      ctx.fillText('turno encerrado', cx, cy)
+      ctx.fillText(tr('feedLarvae.shiftOver'), cx, cy)
       ctx.restore()
     }
 
@@ -1683,7 +1684,7 @@ function drawHUD(ctx, L, reveal) {
   const sy = cy - 3 * k
   ctx.font = `italic ${Math.round(10 * k)}px Georgia, serif`
   ctx.fillStyle = withAlpha(INK_LINE, 0.7)
-  ctx.fillText('alimento', sx - 4 * k, cy + 14 * k)
+  ctx.fillText(tr('feedLarvae.food'), sx - 4 * k, cy + 14 * k)
   ctx.strokeStyle = withAlpha(INK_LINE, 0.55)
   ctx.lineWidth = 0.8
   ctx.beginPath()

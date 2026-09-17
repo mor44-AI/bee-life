@@ -14,16 +14,16 @@ import {
   drawPaperCard,
   drawButton,
   wrapText,
-  rankName,
   COLONY_INDICATORS,
   fadeScreen,
   screenLayout,
   safeRect,
   uiScaleOf,
   anyKeyPressed,
-  continueHint,
+  isTouchUI,
   drawHint,
 } from '../ui/HUD.js'
+import { t as tr } from '../i18n/index.js'
 
 const KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const MIN_TIME = 1.2
@@ -36,9 +36,16 @@ const clamp = (v, a, b) => Math.max(a, Math.min(b, v))
 const clamp01 = (v) => clamp(v, 0, 1)
 const seg = (time, a, b) => ease(clamp01((time - a) / (b - a)), 'easeInOutCubic')
 
-const SUBTITLE = {
-  completed: 'lá fora, o mundo ultravioleta espera',
-  lifeOver: 'A sua vida chegou ao fim antes de dominar a defesa da entrada. A colônia segue.',
+const SUBTITLE_KEY = { completed: 'end.completedSubtitle', lifeOver: 'end.lifeOverSubtitle' }
+
+// Encolhe a fonte até o texto caber (textos pt/en têm larguras diferentes).
+function fitSize(ctx, text, maxW, size, min, opts) {
+  ctx.font = font(size, opts)
+  while (size > min && ctx.measureText(text).width > maxW) {
+    size -= 0.5
+    ctx.font = font(size, opts)
+  }
+  return size
 }
 
 function computeLayout(context, ctx) {
@@ -51,7 +58,7 @@ function computeLayout(context, ctx) {
   const subLH = subSize * 1.35
   ctx.save()
   ctx.font = font(subSize, { style: 'italic' })
-  const subLines = wrapText(ctx, SUBTITLE[reason], Math.min(560, S.w - 48))
+  const subLines = wrapText(ctx, tr(SUBTITLE_KEY[reason]), Math.min(560, S.w - 48))
   ctx.restore()
 
   const cardW = Math.min(640, S.w - 24)
@@ -156,8 +163,9 @@ export default {
     ctx.textBaseline = 'alphabetic'
     ctx.fillStyle = UI.ink
     ctx.globalAlpha = seg(t, 0.6, 1.5)
-    ctx.font = font(M.titleSize)
-    ctx.fillText(completed ? 'Continua em breve' : 'Uma vida inteira', cx, M.titleY)
+    const title = tr(completed ? 'end.completedTitle' : 'end.lifeOverTitle')
+    fitSize(ctx, title, M.S.w - 24, M.titleSize, 18)
+    ctx.fillText(title, cx, M.titleY)
     ctx.globalAlpha = 0.88 * seg(t, 1.0, 2.0)
     ctx.font = font(M.subSize, { style: 'italic' })
     M.subLines.forEach((line, i) => ctx.fillText(line, cx, M.titleY + M.titleSize * 0.85 + i * M.subLH))
@@ -184,14 +192,20 @@ export default {
     ctx.font = font(12 * u)
     setLetterSpacing(ctx, 1.5)
     ctx.globalAlpha = cp * 0.8
-    ctx.fillText('REGISTRO DE CAMPO', card.x + padX, card.y + 28 * u)
+    ctx.fillText(tr('end.fieldLog'), card.x + padX, card.y + 28 * u)
     setLetterSpacing(ctx, 0)
     ctx.globalAlpha = cp
-    ctx.font = font(16 * u)
-    const rank = rankName(context.tasks?.currentRank)
-    ctx.fillText(`Dias vividos: ${daysLived} de ${maxDays}`, card.x + padX, card.y + 52 * u)
+    const rankId = context.tasks?.currentRank
+    const rank = rankId ? tr(`rank.${rankId}`) : ''
+    const daysText = tr('end.daysLived', { days: daysLived, max: maxDays })
+    const rankText = tr('end.finalRole', { rank })
+    // Em tela estreita cada linha tem a largura toda; lado a lado, metade.
+    const lineW = narrow ? card.w - padX * 2 : (card.w - padX * 2) / 2 - 8
+    const infoSize = Math.min(fitSize(ctx, daysText, lineW, 16 * u, 11), fitSize(ctx, rankText, lineW, 16 * u, 11))
+    ctx.font = font(infoSize)
+    ctx.fillText(daysText, card.x + padX, card.y + 52 * u)
     ctx.textAlign = narrow ? 'left' : 'right'
-    ctx.fillText(`Função final: ${rank}`, narrow ? card.x + padX : card.x + card.w - padX, narrow ? card.y + 75 * u : card.y + 52 * u)
+    ctx.fillText(rankText, narrow ? card.x + padX : card.x + card.w - padX, narrow ? card.y + 75 * u : card.y + 52 * u)
     ctx.restore()
 
     const colony = context.colony || {}
@@ -215,9 +229,9 @@ export default {
     if (ready > 0) {
       ctx.save()
       ctx.globalAlpha = ready
-      drawButton(ctx, M.btn, 'Voltar ao menu', { focused: true, accent: false, time: t })
+      drawButton(ctx, M.btn, tr('end.backToMenu'), { focused: true, accent: false, time: t })
       ctx.restore()
-      drawHint(ctx, M.L, continueHint(context, 'voltar ao menu'), ready)
+      drawHint(ctx, M.L, tr(isTouchUI(context) ? 'end.tapHint' : 'end.clickHint'), ready)
     }
 
     fadeScreen(ctx, w, h, (1 - seg(t, 0, 0.8)) * 0.9, UI.paper)

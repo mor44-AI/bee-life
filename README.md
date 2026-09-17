@@ -1,6 +1,8 @@
-# Vida de Abelha
+# Bee Life
 
-Jogo em Canvas 2D sobre a vida de uma operária de Mandaçaia. A arte é procedural.
+A Canvas 2D game about the life of a Mandaçaia stingless worker bee, with procedural art.
+
+Jogo em Canvas 2D sobre a vida de uma operária de Mandaçaia, com arte procedural.
 
 ## Jogar localmente
 
@@ -18,7 +20,7 @@ No celular, use arraste e os controles na tela. A limpeza mantém a dica textual
 - A dificuldade começa em 0,57 em cada fase e aumenta nos turnos seguintes.
 - A pontuação afeta a colônia, mas não antecipa nem atrasa a promoção.
 - O nascimento é uma animação de abertura, não uma quinta fase com turnos.
-- Abertura em vídeo: `public/video/intro.mp4` (vertical 720×1280, com som; poster `public/video/intro-poster.jpg`). Toca após "Toque/Clique para começar" só na primeira visita (flag `vida-de-abelha.intro-seen.v1` no localStorage); "Ver abertura" no menu reabre. Sem o arquivo, o jogo abre direto no menu.
+- Abertura em vídeo: `public/video/intro.mp4` (vertical 720×1280, com som, assinatura "Bee Life"; poster `public/video/intro-poster.jpg`). Toca após "Toque/Clique para começar" só na primeira visita (flag `vida-de-abelha.intro-seen.v1` no localStorage); "Ver abertura" no menu reabre. Sem o arquivo, o jogo abre direto no menu.
 - A rainha oferece janelas de alimentação mais frequentes; o especial foi preservado.
 - Salvamento local automático ao nascer e ao concluir cada turno. Recarregar durante um turno retoma o último ponto salvo, sem contabilizar o turno incompleto.
 
@@ -27,6 +29,14 @@ No celular, use arraste e os controles na tela. A limpeza mantém a dica textual
 - `npm test` ou `node --test tests/*.test.js`: progressão, dificuldade, retomada e persistência.
 - `npm run build` ou `node node_modules/vite/bin/vite.js build`: pacote de produção.
 - `/_preview/state.html?state=feedQueen`: teste isolado de uma fase. Outras opções: `cleaning`, `feedLarvae`, `guard`.
+
+## Deploy (Vercel)
+
+1. No Vercel, importe o repositório GitHub `mor44-AI/bee-life`.
+2. O framework Vite é detectado; `vercel.json` fixa `npm run build` e a saída `dist`, e define o cache (`/assets/*` imutável, `/video/*` 7 dias, `index.html` sempre revalidado).
+3. Não há variáveis de ambiente. Cada push na branch principal publica de novo.
+
+O filme de abertura é gerado a partir de `film/intro-abelha/` (fora do build); só `public/video/` vai para o site.
 
 ## Ondas de desenvolvimento
 

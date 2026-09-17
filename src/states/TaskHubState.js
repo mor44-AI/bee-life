@@ -11,6 +11,7 @@ import { drawBeeBody, createIdlePose } from '../art/bee.js'
 import { drawLightOverlay } from '../art/environment.js'
 import { species } from '../data/species.js'
 import { config } from '../data/config.js'
+import { t as tr } from '../i18n/index.js'
 import { UI, font, drawDottedCircle, drawScaleArc, setLetterSpacing } from '../ui/IndicatorBar.js'
 import {
   drawHUD,
@@ -225,7 +226,7 @@ export default {
       ctx.font = font(12 * u)
       setLetterSpacing(ctx, 1.5)
       ctx.globalAlpha = 0.85
-      ctx.fillText('VOCÊ SABIA?', f.x + padX, labelY)
+      ctx.fillText(tr('hub.didYouKnow'), f.x + padX, labelY)
       setLetterSpacing(ctx, 0)
       ctx.globalAlpha = alpha
       const textTop = labelY + 8 * u
@@ -251,11 +252,11 @@ export default {
     }
 
     // Botão de turno - acento rosa da cena (zona do polegar).
-    drawButton(ctx, H.btn, rank === 'larva' ? 'Nascer' : 'Iniciar turno', {
+    drawButton(ctx, H.btn, rank === 'larva' ? tr('hub.beBorn') : tr('hub.startShift'), {
       hover,
       focused: true,
       time: t,
-      caption: rank === 'larva' ? '' : `${rankName(rank)} · turno ${(context.tasks?.getCompletedShifts?.() ?? 0) + 1} de ${config.turnsPerTask[rank]}`,
+      caption: rank === 'larva' ? '' : tr('hub.shiftCaption', { rank: rankName(rank), n: (context.tasks?.getCompletedShifts?.() ?? 0) + 1, total: config.turnsPerTask[rank] }),
       seed: 5,
     })
 

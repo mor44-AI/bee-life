@@ -1,6 +1,6 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>Vida de Abelha - intro</title>
+<title>Bee Life - intro</title>
 <style>
   body{margin:0;background:#111;color:#ccc;font:13px/1.4 ui-monospace,Menlo,monospace;display:flex;flex-direction:column;align-items:center;gap:10px;padding:12px}
   canvas#c{width:auto;height:min(80vh,1280px);background:#000;box-shadow:0 0 0 1px #333}
@@ -40,7 +40,7 @@
 // 22.50  1.50  mordida       riso   zoom 1.9          bite: flash, lead ant flung, others retreat     flash (1 frame), speedLines, rings    impact
 // 24.00  1.50  mosca         riso   wide              phorid fly zigzags in, guards raise wings        drawFly ghost wings                   buzz
 // 25.50  1.50  perseguicao   riso   soft follow       guard chases fly off, returns hovering           speedLines, loops                     chase run, resolve
-// 27.00  3.00  assinatura    riso   static            hand-lettered "Vida de Abelha", bee hovers        signOff, ripples                      sine dyad
+// 27.00  3.00  assinatura    riso   static            hand-lettered "Bee Life", bee hovers              signOff, ripples                      sine dyad
 // Transitions: iris (ovo->favo), ink blot (volta->corte), one flash (mordida). Everything else hard cuts.
 
 // ===================== PALETTE =====================
@@ -412,7 +412,7 @@ function sceneAssinatura(c, tau, i) {
   const bx = CX + Math.sin(tau * 2.4) * 160 * (1 - sm(1.5, 3, tau) * .6), by = CY - 330 + Math.sin(tau * 4.8) * 40;
   loops(c, bx, by + 40, -Math.PI / 2 + Math.cos(tau * 2.4) * .35, 701, .6, [col('pink'), col('honey')]);
   placeBee(c, bx, by, Math.cos(tau * 2.4) * .35, 1.25, 'ink', { wing: .95, flap: i % 2, tuck: 1 }, 200);
-  signOff(c, 'Vida de Abelha', '', { x: CX, y: CY + 150, size: 118, ink: PAL.ink, ink2: col('pink'), progressA: sm(.2, 1.3, tau), progressB: 0 });
+  signOff(c, 'Bee Life', '', { x: CX, y: CY + 175, size: 222, ink: PAL.ink, ink2: col('pink'), progressA: sm(.2, 1.3, tau), progressB: 0 });
 }
 
 // Puppet sheet for development: every puppet at scales .6, 1, 1.8

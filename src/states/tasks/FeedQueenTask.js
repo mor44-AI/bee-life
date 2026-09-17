@@ -36,6 +36,7 @@ import {
   INK_LINE,
 } from '../../art/textureUtils.js'
 import { styleGuide } from '../../data/styleGuide.js'
+import { t, getLang } from '../../i18n/index.js'
 
 const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
@@ -280,7 +281,7 @@ function buildBackground(L, dpr) {
   g.globalAlpha = 0.55
   g.font = `italic ${Math.round(clamp(12 * S, 11, 18))}px Georgia, serif`
   g.textAlign = 'center'
-  g.fillText('câmara real', cx, cy - ry - 6 * S)
+  g.fillText(t('feedQueen.chamber'), cx, cy - ry - 6 * S)
   const sbx = L.pf.x + L.pf.w - 12 - 60 * S
   const sby = cy - ry - 4 * S
   g.strokeStyle = INK_LINE
@@ -295,7 +296,7 @@ function buildBackground(L, dpr) {
   }
   g.stroke()
   g.font = `italic ${Math.round(clamp(10 * S, 9, 14))}px Georgia, serif`
-  g.fillText('5 mm', sbx + 30 * S, sby - 9 * S)
+  g.fillText(t('feedQueen.scale'), sbx + 30 * S, sby - 9 * S)
   g.restore()
 
   return canvas
@@ -669,7 +670,7 @@ function syncControls(context) {
   const want = !!st.combo
   if (st.showDirs === want && ctl.options?.meter === st.meter) return
   st.showDirs = want
-  ctl.configure({ showAction: false, showSpecial: true, showDirections: want, meter: st.meter, specialLabel: 'ABRIR' })
+  ctl.configure({ showAction: false, showSpecial: true, showDirections: want, meter: st.meter, specialLabel: t('feedQueen.specialButton') })
 }
 
 function makeWindow(level) {
@@ -1092,9 +1093,9 @@ function computeResult() {
   const score = Math.round(clamp(feedPart + perfectPart + accPart + hungerPart, 0, 100))
   st.scoreParts = { feedPart, perfectPart, accPart, hungerPart }
   const crit = Math.round(s.critTime)
-  const feedsTxt = `${s.feeds} ${s.feeds === 1 ? 'alimentação' : 'alimentações'}`
-  const critTxt = crit > 0 ? `rainha em fome crítica por ${crit}s` : 'rainha nunca passou fome crítica'
-  return { score, summary: `${feedsTxt}, ${critTxt}` }
+  const feeds = t('feedQueen.summary.feeds', { n: s.feeds })
+  const critTxt = crit > 0 ? t('feedQueen.summary.crit', { s: crit }) : t('feedQueen.summary.noCrit')
+  return { score, summary: t('feedQueen.summary', { feeds, crit: critTxt }) }
 }
 
 function exit() {
@@ -1110,7 +1111,11 @@ function render(context, ctx) {
   if (!ensureLayout(context)) return
   if (!st.attendants.length) initWorld()
   const L = st.L
-  if (!st.bg) st.bg = buildBackground(L, context.renderer?.dpr || window.devicePixelRatio || 1)
+  // o fundo tem texto ("câmara real"): refaz se o idioma mudar
+  if (!st.bg || st.bgLang !== getLang()) {
+    st.bg = buildBackground(L, context.renderer?.dpr || window.devicePixelRatio || 1)
+    st.bgLang = getLang()
+  }
   ctx.drawImage(st.bg, 0, 0, L.W, L.H)
 
   const q = st.queen
@@ -1849,7 +1854,8 @@ function drawHUD(ctx, layout) {
   ctx.globalAlpha = 0.8
   const tx = hx + R + 16 * S
   const midY = hb.y + hb.h / 2
-  ctx.fillText('fome da rainha', tx, midY - 4)
+  const hungerLabel = t('feedQueen.hunger')
+  ctx.fillText(hungerLabel, tx, midY - 4)
 
   // tally de alimentações (marcas de caderno de campo) + ovos
   const ty = hb.y + hb.h - 6
@@ -1866,7 +1872,7 @@ function drawHUD(ctx, layout) {
     }
   }
   // ovos postos (à direita do título)
-  const ex = tx + ctx.measureText('fome da rainha').width + 16 * S
+  const ex = tx + ctx.measureText(hungerLabel).width + 16 * S
   const ey = midY - 4
   ctx.globalAlpha = st.queen.glow < 0.2 ? 0.4 : 0.85
   ctx.beginPath()

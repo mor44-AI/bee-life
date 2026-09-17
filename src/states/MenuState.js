@@ -23,6 +23,7 @@ import {
   isTouchUI,
   drawHint,
 } from '../ui/HUD.js'
+import { t as tr, getLang, setLang } from '../i18n/index.js'
 
 const backdrop = createPaperBackdrop({ seed: 31 })
 let t = 0
@@ -34,10 +35,10 @@ let hasSave = false
 
 function mainItems() {
   return [
-    { id: 'new', label: 'Novo Jogo' },
-    { id: 'continue', label: 'Continuar', disabled: !hasSave, caption: hasSave ? '' : 'nenhuma vida registrada' },
-    { id: 'settings', label: 'Configurações' },
-    { id: 'replay', label: 'Ver abertura', discreet: true },
+    { id: 'new', label: tr('menu.newGame') },
+    { id: 'continue', label: tr('menu.continue'), disabled: !hasSave, caption: hasSave ? '' : tr('menu.noSave') },
+    { id: 'settings', label: tr('menu.settings') },
+    { id: 'replay', label: tr('menu.replayIntro'), discreet: true },
   ]
 }
 
@@ -46,10 +47,21 @@ function computeLayout(context) {
   const S = safeRect(L)
   const u = uiScaleOf(L)
   const minTouch = L.minTouch ?? 56
-  const wide = S.w >= 720 && S.w > S.h * 1.1
-  const btnH = Math.max(minTouch, Math.round(62 * u))
-  const gap = Math.round(14 * u)
-  const linkH = minTouch
+  // Celular deitado (ex. 667x320) também usa a coluna à esquerda; na pilha vertical o
+  // título saía pelo topo.
+  const wide = S.w > S.h * 1.1 && (S.w >= 720 || S.w > S.h * 1.5)
+  let btnH = Math.max(minTouch, Math.round(62 * u))
+  let gap = Math.round(14 * u)
+  const linkH = wide ? Math.min(minTouch, 48) : minTouch
+  if (wide) {
+    // Tela deitada e baixa: encolhe botões (alvo mínimo 44px) para caber título + pilha.
+    const tSize = Math.min(64, S.w * 0.055, S.h * 0.11)
+    const room = S.h - 32 - tSize * 1.6 - 24 * u - linkH
+    if (btnH * 3 + gap * 2 > room) {
+      gap = Math.max(12, Math.min(gap, room * 0.05))
+      btnH = Math.max(44, (room - gap * 2) / 3)
+    }
+  }
   const stackH = btnH * 3 + gap * 2 + linkH
   let plate, titleX, titleY, titleSize, align, btnX, btnY0, btnW
 
@@ -59,7 +71,7 @@ function computeLayout(context) {
     titleSize = Math.min(64, S.w * 0.055, S.h * 0.11)
     plate = { cx: S.x + S.w * 0.68, cy: S.y + S.h * 0.5, R: Math.min(S.w * 0.2, S.h * 0.32) }
     const blockH = titleSize * 1.6 + 24 * u + stackH
-    const top = S.y + Math.max(20, (S.h - blockH) / 2)
+    const top = S.y + Math.max(12, (S.h - blockH) / 2)
     titleX = colX
     titleY = top + titleSize
     align = 'left'
@@ -75,7 +87,8 @@ function computeLayout(context) {
     titleX = S.x + S.w / 2
     // Título logo acima dos botões; a prancha ocupa o espaço que sobra no alto.
     titleY = btnY0 - 36 * u - titleSize * 0.55
-    const plateTop = S.y + 30 * u
+    // Abaixo do seletor PT | EN (canto superior direito) em tela estreita, para a legenda não encostar nele.
+    const plateTop = S.y + (S.w < 400 ? Math.max(30 * u, 60) : 30 * u)
     const plateBottom = titleY - titleSize - 16 * u
     const avail = Math.max(60, plateBottom - plateTop)
     const R = Math.max(40, Math.min(S.w * 0.3, avail / 2.6))
@@ -102,7 +115,7 @@ function computeLayout(context) {
     if (ctx) {
       ctx.save()
       ctx.font = font(15.5 * u, { style: 'italic' })
-      lines = wrapText(ctx, CONFIRM_TEXT, cardW - pad * 2).length
+      lines = wrapText(ctx, tr('menu.confirmText'), cardW - pad * 2).length
       ctx.restore()
     }
     bodyH = 60 * u + lines * 22 * u + 8 * u
@@ -114,8 +127,8 @@ function computeLayout(context) {
   let modalButtons
   if (mode === 'confirm') {
     const ids = [
-      { id: 'confirmNew', label: 'Recomeçar' },
-      { id: 'cancel', label: 'Cancelar' },
+      { id: 'confirmNew', label: tr('menu.confirmRestart') },
+      { id: 'cancel', label: tr('menu.cancel') },
     ]
     if (stacked) {
       const w = cardW - pad * 2
@@ -126,48 +139,97 @@ function computeLayout(context) {
     }
   } else {
     const w = Math.min(cardW - pad * 2, 240 * u)
-    modalButtons = [{ id: 'back', label: 'Voltar', rect: { x: card.x + (cardW - w) / 2, y: by, w, h: mbH } }]
+    modalButtons = [{ id: 'back', label: tr('menu.back'), rect: { x: card.x + (cardW - w) / 2, y: by, w, h: mbH } }]
   }
 
+  let settingsHead = null
   if (mode === 'settings') {
     const audio = context.audio
-    const rowGap = 8
-    const headingH = 54
-    const rowH = Math.max(44, Math.min(56, (S.h - 72 - headingH - 3 * rowGap) / 4))
-    card.h = headingH + 4 * rowH + 3 * rowGap + 32
-    card.y = S.y + (S.h - card.h) / 2
-    const x = card.x + 16
-    const y = card.y + headingH
-    const w = card.w - 32
-    const rect = row => ({ x, y: y + row * (rowH + rowGap), w, h: rowH })
+    const audioOk = !!audio?.available
+    const rowGap = Math.max(8, Math.round(8 * u))
+    const inset = 16
+    const bottom = 16
+    const margin = 12
+    // Cabeçalho medido a partir do próprio tamanho da fonte (antes era um offset fixo
+    // de 54px e o título invadia a primeira linha quando u > 1, ex. 800×450).
+    const titleSize = Math.max(18, Math.min(23 * u, 28))
+    const noteSize = Math.max(11, 12 * u)
+    const titleBase = Math.max(14, 16 * u) + titleSize * 0.85
+    const noteBase = titleBase + (audioOk ? 0 : noteSize * 1.55)
+    const headingH = noteBase + Math.max(14, 16 * u)
+    settingsHead = { titleSize, titleBase, noteSize, noteBase }
+    const heightFor = (rows, rh) => headingH + rows * rh + (rows - 1) * rowGap + bottom
+    const availH = S.h - margin * 2
+    const rowHFor = rows => Math.max(44, Math.min(56, (availH - headingH - bottom - (rows - 1) * rowGap) / rows))
+    // Uma coluna (5 linhas) sempre que couber; senão, duas colunas (3 linhas) em tela deitada.
+    const twoCol = heightFor(5, 44) > availH && S.w >= 480
+    const rows = twoCol ? 3 : 5
+    const rowH = rowHFor(rows)
+    card.w = twoCol ? Math.min(620, S.w - 32) : cardW
+    card.x = S.x + (S.w - card.w) / 2
+    card.h = heightFor(rows, rowH)
+    card.y = S.y + Math.max(margin, (S.h - card.h) / 2)
+    const x0 = card.x + inset
+    const innerW = card.w - inset * 2
+    const colW = twoCol ? (innerW - rowGap) / 2 : innerW
+    const cell = (row, col = 0, span = 1) => ({
+      x: x0 + col * (colW + rowGap),
+      y: card.y + headingH + row * (rowH + rowGap),
+      w: colW * span + rowGap * (span - 1),
+      h: rowH,
+    })
+    const half = r => ({ ...r, w: (r.w - rowGap) / 2 })
+    const rightHalf = r => ({ ...r, x: r.x + (r.w + rowGap) / 2, w: (r.w - rowGap) / 2 })
     const volume = Math.round((audio?.volume ?? 0.45) * 100)
+    const volRow = twoCol ? cell(1, 0, 2) : cell(1)
     modalButtons = [
-      { id: 'music', label: `Som: ${audio?.muted ? 'desligado' : 'ligado'}`, rect: rect(0) },
-      { id: 'quieter', label: 'Volume -', rect: { ...rect(1), w: (w - rowGap) / 2 } },
-      { id: 'louder', label: `${volume}% +`, rect: { ...rect(1), x: x + (w + rowGap) / 2, w: (w - rowGap) / 2 } },
-      { id: 'effects', label: `Efeitos: ${audio?.effectsEnabled === false ? 'desligados' : 'ligados'}`, rect: rect(2) },
-      { id: 'back', label: 'Voltar', rect: rect(3) },
+      { id: 'music', label: tr(audio?.muted ? 'menu.soundOff' : 'menu.soundOn'), rect: cell(0) },
+      { id: 'quieter', label: tr('menu.volumeDown'), rect: half(volRow) },
+      { id: 'louder', label: tr('menu.volumeUp', { volume }), rect: rightHalf(volRow) },
+      { id: 'effects', label: tr(audio?.effectsEnabled === false ? 'menu.effectsOff' : 'menu.effectsOn'), rect: twoCol ? cell(0, 1) : cell(2) },
+      { id: 'language', label: tr('menu.language', { lang: tr('app.langName') }), rect: twoCol ? cell(2, 0) : cell(3) },
+      { id: 'back', label: tr('menu.back'), rect: twoCol ? cell(2, 1) : cell(4) },
     ]
-    if (S.h < 390 && S.w >= 540) {
-      card.w = Math.min(620, S.w - 32)
-      card.x = S.x + (S.w - card.w) / 2
-      card.h = headingH + 3 * 48 + 2 * rowGap + 24
-      card.y = S.y + (S.h - card.h) / 2
-      const columnW = (card.w - 40) / 2
-      modalButtons.forEach((button, i) => {
-        button.rect = {
-          x: card.x + 16 + (i % 2) * (columnW + rowGap),
-          y: card.y + headingH + Math.floor(i / 2) * (48 + rowGap),
-          w: columnW, h: 48,
-        }
-      })
-    }
-    if (!audio?.available) modalButtons.slice(0, 4).forEach(b => { b.disabled = true })
+    if (!audioOk) modalButtons.slice(0, 4).forEach(b => { b.disabled = true })
   }
-  return { L, S, u, wide, plate, titleX, titleY, titleSize, align, buttons, card, modalButtons, pad, audioAvailable: !!context.audio?.available }
+  const langToggle = langToggleRect(S, u)
+  return { L, S, u, wide, plate, titleX, titleY, titleSize, align, buttons, card, modalButtons, pad, settingsHead, langToggle, audioAvailable: !!context.audio?.available }
 }
 
-const CONFIRM_TEXT = 'A vida registrada até agora será apagada e uma nova operária nascerá.'
+// Seletor PT | EN discreto no canto superior direito da área segura (alvo ≥ 44px).
+function langToggleRect(S, u) {
+  const h = 44
+  const w = Math.max(96, Math.round(104 * u))
+  return { x: S.x + S.w - w - 6, y: S.y + 6, w, h }
+}
+
+function langAt(rect, p) {
+  if (!pointInRect(p, rect)) return null
+  return p.x < rect.x + rect.w / 2 ? 'pt' : 'en'
+}
+
+// Tamanho de rótulo que cabe no botão (pt e en têm larguras diferentes; tela de 320px).
+function fitLabelSize(ctx, rect, label, caption) {
+  let size = Math.max(17, Math.min(24, rect.h * (caption ? 0.3 : 0.33)))
+  const maxW = rect.w - 44 // espaço para as marcas de foco nas laterais
+  ctx.save()
+  ctx.font = font(size)
+  while (size > 12 && ctx.measureText(label).width > maxW) {
+    size -= 0.5
+    ctx.font = font(size)
+  }
+  ctx.restore()
+  return size
+}
+
+function fitFont(ctx, text, maxW, size, min, opts) {
+  ctx.font = font(size, opts)
+  while (size > min && ctx.measureText(text).width > maxW) {
+    size -= 0.5
+    ctx.font = font(size, opts)
+  }
+  return size
+}
 
 function grow(r, g) {
   return { x: r.x - g, y: r.y - g, w: r.w + g * 2, h: r.h + g * 2 }
@@ -208,6 +270,9 @@ function activate(context, id) {
     case 'effects':
       context.audio?.setEffectsEnabled(!context.audio.effectsEnabled)
       if (context.audio?.effectsEnabled) context.audio.playResult(1)
+      break
+    case 'language':
+      setLang(getLang() === 'pt' ? 'en' : 'pt')
       break
     case 'replay':
       context.goTo?.('intro', { replay: true })
@@ -256,6 +321,11 @@ export default {
       if (items[selected]?.disabled) selected = nextEnabled(items, selected, 1)
 
       for (const c of clicks) {
+        const lang = langAt(M.langToggle, c)
+        if (lang) {
+          setLang(lang)
+          return
+        }
         const hit = items.find((b) => pointInRect(c, grow(b.rect, g)))
         if (hit && !hit.disabled) {
           selected = items.indexOf(hit)
@@ -310,11 +380,13 @@ export default {
     ctx.fillStyle = UI.ink
     ctx.textAlign = M.align
     ctx.textBaseline = 'alphabetic'
-    ctx.font = font(M.titleSize)
-    ctx.fillText('Vida de Abelha', M.titleX, M.titleY)
+    // Largura disponível: tela toda (vertical) ou até a prancha (deitada).
+    const textW = M.wide ? M.plate.cx - M.plate.R * 1.2 - M.titleX : M.S.w - 24
+    fitFont(ctx, tr('app.title'), textW, M.titleSize, 20)
+    ctx.fillText(tr('app.title'), M.titleX, M.titleY)
     ctx.globalAlpha = 0.8
-    ctx.font = font(Math.max(14 * u, M.titleSize * 0.27), { style: 'italic' })
-    ctx.fillText('a vida de uma operária de Mandaçaia', M.titleX, M.titleY + Math.max(22 * u, M.titleSize * 0.5))
+    fitFont(ctx, tr('app.subtitle'), textW, Math.max(14 * u, M.titleSize * 0.27), 11, { style: 'italic' })
+    ctx.fillText(tr('app.subtitle'), M.titleX, M.titleY + Math.max(22 * u, M.titleSize * 0.5))
     ctx.restore()
 
     const inMain = mode === 'main'
@@ -325,6 +397,7 @@ export default {
         return
       }
       drawButton(ctx, b.rect, b.label, {
+        size: fitLabelSize(ctx, b.rect, b.label, b.caption),
         // No toque não há "foco" de teclado: destaca só o botão principal.
         focused: inMain && (touch ? i === (hasSave ? 1 : 0) : i === selected),
         disabled: b.disabled,
@@ -334,7 +407,8 @@ export default {
       })
     })
 
-    if (!touch) drawHint(ctx, M.L, 'setas + Enter, ou clique')
+    if (!touch) drawHint(ctx, M.L, tr('menu.keyHint'))
+    drawLangToggle(ctx, M.langToggle, u, inMain)
 
     if (!inMain) drawModal(ctx, M, w, h)
   },
@@ -350,7 +424,7 @@ function drawLink(ctx, rect, label, u, focused) {
   ctx.globalAlpha = focused ? 0.95 : 0.7
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.font = font(16 * u, { style: 'italic' })
+  fitFont(ctx, label, rect.w + 40, 16 * u, 12, { style: 'italic' })
   ctx.fillText(label, cx, cy)
   const tw = ctx.measureText(label).width
   ctx.restore()
@@ -390,7 +464,7 @@ function drawPlate(ctx, plate, time, u) {
   ctx.textAlign = 'center'
   ctx.font = font(Math.max(12 * u, R * 0.06))
   setLetterSpacing(ctx, 2)
-  ctx.fillText('FIG. 1 - OPERÁRIA', cx, cy - R * 1.16)
+  ctx.fillText(tr('menu.plateCaption'), cx, cy - R * 1.16)
   setLetterSpacing(ctx, 0)
   ctx.restore()
 
@@ -409,22 +483,57 @@ function drawModal(ctx, M, w, h) {
   const cx = card.x + card.w / 2
   if (mode === 'confirm') {
     ctx.font = font(Math.min(23 * u, (card.w - pad * 2) / 11))
-    ctx.fillText('Começar uma nova vida?', cx, card.y + pad + 26 * u)
+    fitFont(ctx, tr('menu.confirmTitle'), card.w - pad * 2, Math.min(23 * u, (card.w - pad * 2) / 11), 14)
+    ctx.fillText(tr('menu.confirmTitle'), cx, card.y + pad + 26 * u)
     ctx.font = font(15.5 * u, { style: 'italic' })
     ctx.globalAlpha = 0.88
-    wrapText(ctx, CONFIRM_TEXT, card.w - pad * 2).forEach((line, i) => {
+    wrapText(ctx, tr('menu.confirmText'), card.w - pad * 2).forEach((line, i) => {
       ctx.fillText(line, cx, card.y + pad + 62 * u + i * 22 * u)
     })
   } else {
-    ctx.font = font(23 * u)
-    ctx.fillText('Configurações', cx, card.y + pad + 26 * u)
+    const H = M.settingsHead
+    fitFont(ctx, tr('menu.settings'), card.w - 32, H.titleSize, 14)
+    ctx.fillText(tr('menu.settings'), cx, card.y + H.titleBase)
     if (!M.audioAvailable) {
-      ctx.font = font(11 * u)
-      ctx.fillText('Áudio indisponível neste navegador', cx, card.y + 49)
+      ctx.globalAlpha = 0.8
+      fitFont(ctx, tr('menu.audioUnavailable'), card.w - 32, H.noteSize, 9, { style: 'italic' })
+      ctx.fillText(tr('menu.audioUnavailable'), cx, card.y + H.noteBase)
     }
   }
   ctx.restore()
   M.modalButtons.forEach((b, i) => {
-    drawButton(ctx, b.rect, b.label, { focused: i === modalSelected, disabled: b.disabled, time: t })
+    drawButton(ctx, b.rect, b.label, {
+      size: fitLabelSize(ctx, b.rect, b.label),
+      focused: i === modalSelected,
+      disabled: b.disabled,
+      time: t,
+    })
   })
+}
+
+function drawLangToggle(ctx, rect, u, active) {
+  const lang = getLang()
+  const cy = rect.y + rect.h / 2
+  const base = active ? 1 : 0.5
+  ctx.save()
+  ctx.strokeStyle = UI.ink
+  ctx.fillStyle = UI.ink
+  ctx.lineWidth = 1
+  ctx.globalAlpha = base * 0.35
+  ctx.beginPath()
+  if (ctx.roundRect) ctx.roundRect(rect.x + 4, rect.y + 6, rect.w - 8, rect.h - 12, 14)
+  else ctx.rect(rect.x + 4, rect.y + 6, rect.w - 8, rect.h - 12)
+  ctx.stroke()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = font(Math.max(14, 14 * u))
+  for (const [code, x] of [['pt', rect.x + rect.w * 0.28], ['en', rect.x + rect.w * 0.72]]) {
+    const on = code === lang
+    ctx.globalAlpha = base * (on ? 1 : 0.5)
+    ctx.fillText(code.toUpperCase(), x, cy)
+    if (on) ctx.fillRect(x - 10, cy + 10, 20, 1.3)
+  }
+  ctx.globalAlpha = base * 0.4
+  ctx.fillText('|', rect.x + rect.w / 2, cy)
+  ctx.restore()
 }

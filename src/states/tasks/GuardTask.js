@@ -48,6 +48,7 @@ import {
   INK_LINE,
 } from '../../art/textureUtils.js'
 import { styleGuide } from '../../data/styleGuide.js'
+import { t } from '../../i18n/index.js'
 
 const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
@@ -1403,10 +1404,13 @@ export function scoreFor({ repelled, breaches, friendly }) {
 function finish(context) {
   const { repelled, breaches, friendly, byAlarm } = st.stats
   const score = scoreFor(st.stats)
-  const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`
-  let summary = `${pl(repelled, 'intruso repelido', 'intrusos repelidos')}, ${pl(breaches, 'brecha', 'brechas')}, ${pl(friendly, 'companheira atingida', 'companheiras atingidas')}`
-  if (byAlarm > 0) summary += ` (${byAlarm} pelo alarme)`
-  if (breaches === 0 && friendly === 0 && repelled > 0) summary += ' - entrada intacta'
+  let summary = [
+    t('guard.summary.repelled', { n: repelled }),
+    t('guard.summary.breaches', { n: breaches }),
+    t('guard.summary.friendly', { n: friendly }),
+  ].join(', ')
+  if (byAlarm > 0) summary += t('guard.summary.byAlarm', { n: byAlarm })
+  if (breaches === 0 && friendly === 0 && repelled > 0) summary += t('guard.summary.intact')
   context.finishShift({ score, summary })
 }
 
@@ -1957,8 +1961,8 @@ export default {
       showSpecial: true,
       showDirections: false,
       meter: st.meter,
-      actionLabel: 'INVESTIR',
-      specialLabel: 'ALARME',
+      actionLabel: t('guard.actionButton'),
+      specialLabel: t('guard.specialButton'),
     })
     ensureLayout(context)
   },

@@ -27,7 +27,8 @@
 //     safeRect(layout) -> { x, y, w, h }  área sem notch/barra
 //     isTouchUI(context) -> boolean  (context.controls.isTouch / input.lastInputType)
 //     anyKeyPressed(input, codes) -> boolean  (borda via input.wasKeyPressed)
-//     continueHint(context, verb = 'continuar') -> 'toque para …' | 'clique ou Enter para …'
+//     continueHint(context, verb = t('hud.verb.continue')) -> 'toque para …' / 'tap to …'
+//       (traduzido via hud.hint.*; passe o verbo já traduzido)
 //     drawHint(ctx, layout, text, alpha = 1)  dica centralizada acima da borda segura
 //   Utilitários de desenho: createLayerCache(paint), createPaperBackdrop(opts),
 //     wrapText(ctx, text, maxWidth), drawPaperCard(ctx, x, y, w, h, opts),
@@ -40,27 +41,25 @@ import { config } from '../data/config.js'
 import { RANK_ORDER } from '../systems/TaskSystem.js'
 import { drawPaperGrain, strokeHandDrawn, seedFromString } from '../art/textureUtils.js'
 import { drawBackground } from '../art/environment.js'
+import { t as tr } from '../i18n/index.js'
 
-export const RANK_NAMES = {
-  larva: 'Larva',
-  cleaning: 'Faxineira',
-  feedLarvae: 'Nutriz',
-  feedQueen: 'Atendente da Rainha',
-  guard: 'Guardiã',
-}
+const RANK_IDS = ['larva', 'cleaning', 'feedLarvae', 'feedQueen', 'guard']
+
+// Nomes traduzidos: getters que leem t('rank.<id>') no idioma atual a cada acesso.
+export const RANK_NAMES = Object.freeze(
+  Object.defineProperties({}, Object.fromEntries(RANK_IDS.map((id) => [id, { enumerable: true, get: () => tr(`rank.${id}`) }])))
+)
 
 export function rankName(id) {
-  return RANK_NAMES[id] ?? String(id ?? '')
+  return RANK_IDS.includes(id) ? tr(`rank.${id}`) : String(id ?? '')
 }
 
-export const COLONY_INDICATORS = [
-  { key: 'population', label: 'População', short: 'Pop.' },
-  { key: 'nectar', label: 'Néctar', short: 'Néctar' },
-  { key: 'pollen', label: 'Pólen', short: 'Pólen' },
-  { key: 'propolis', label: 'Própolis', short: 'Própol.' },
-  { key: 'wax', label: 'Cera', short: 'Cera' },
-  { key: 'health', label: 'Saúde', short: 'Saúde' },
-]
+// label/short são getters traduzidos (idioma atual a cada leitura).
+export const COLONY_INDICATORS = ['population', 'nectar', 'pollen', 'propolis', 'wax', 'health'].map((key) => ({
+  key,
+  get label() { return tr(`hud.indicator.${key}`) },
+  get short() { return tr(`hud.indicator.${key}.short`) },
+}))
 
 const NIGHT_TINT = '#2E3B52'
 
@@ -163,8 +162,8 @@ export function anyKeyPressed(input, codes) {
   return codes.some((c) => input.wasKeyPressed(c))
 }
 
-export function continueHint(context, verb = 'continuar') {
-  return isTouchUI(context) ? `toque para ${verb}` : `clique ou Enter para ${verb}`
+export function continueHint(context, verb = tr('hud.verb.continue')) {
+  return tr(isTouchUI(context) ? 'hud.hint.touch' : 'hud.hint.desktop', { verb })
 }
 
 /** Dica discreta (mas legível) centralizada acima da borda segura inferior. */
@@ -464,9 +463,10 @@ function drawDayDial(ctx, x, y, r, time, t, night, u) {
   ctx.textBaseline = 'middle'
   ctx.font = font(18 * u)
   ctx.fillText(String(day), x, y - 4 * u)
-  ctx.font = font(12 * u, { style: 'italic' })
+  const ofMax = tr('hud.dayOf', { max: maxDays })
+  fitFont(ctx, ofMax, r * 1.5, 12 * u, 9, { style: 'italic' })
   ctx.globalAlpha = 0.8
-  ctx.fillText(`de ${maxDays}`, x, y + 10 * u)
+  ctx.fillText(ofMax, x, y + 10 * u)
   ctx.restore()
 
   // Pequeno sol / lua orbitando o mostrador.
@@ -543,8 +543,7 @@ function drawProgressRule(ctx, x, y, w, progress, u) {
 
 function progressCaption(p) {
   const n = p.turnsLeft
-  const turns = `${n} ${n === 1 ? 'turno' : 'turnos'}`
-  return p.next ? `${turns} até ${rankName(p.next)}` : `${turns} até o fim do Marco 1`
+  return p.next ? tr('hud.progress.next', { n, rank: rankName(p.next) }) : tr('hud.progress.end', { n })
 }
 
 function drawRankBlock(ctx, context, tx, top, colW, u, showProgress) {
@@ -556,7 +555,7 @@ function drawRankBlock(ctx, context, tx, top, colW, u, showProgress) {
   ctx.font = font(11.5 * u)
   setLetterSpacing(ctx, 1.5)
   ctx.globalAlpha = 0.75
-  ctx.fillText('FUNÇÃO', tx, top + 12 * u)
+  ctx.fillText(tr('hud.role'), tx, top + 12 * u)
   setLetterSpacing(ctx, 0)
   ctx.globalAlpha = 1
   fitFont(ctx, rankName(rankId), colW, 22 * u, 15)
@@ -608,7 +607,10 @@ export function drawHUD(ctx, context, opts = {}) {
 
   const colony = context.colony || {}
   s.bars.forEach((bar, i) => {
-    bar.setValue(colony[COLONY_INDICATORS[i].key] ?? 0)
+    const ind = COLONY_INDICATORS[i]
+    bar.label = ind.label
+    bar.shortLabel = ind.short
+    bar.setValue(colony[ind.key] ?? 0)
     bar.update(dt)
   })
 

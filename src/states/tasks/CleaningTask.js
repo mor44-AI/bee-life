@@ -41,6 +41,7 @@ import {
 } from '../../art/textureUtils.js'
 import { styleGuide } from '../../data/styleGuide.js'
 import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
+import { t as tr } from '../../i18n/index.js'
 
 const PAL = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
@@ -787,8 +788,8 @@ export default {
       showSpecial: true,
       showDirections: false,
       meter: st.meter,
-      actionLabel: 'AÇÃO',
-      specialLabel: 'RESINA',
+      actionLabel: tr('cleaning.action'),
+      specialLabel: tr('cleaning.special'),
     })
     rebuildLayers(context)
     st.viewKey = st.view.key
@@ -1648,11 +1649,11 @@ function renderHint(ctx, context) {
   let alpha = 0
   if (t < 6) {
     msg = context.controls.isTouch
-      ? 'arraste para voar · encoste para pegar · leve à entrada'
-      : 'WASD/setas ou mouse · encoste para pegar · leve à entrada'
+      ? tr('cleaning.hintTouch')
+      : tr('cleaning.hintKeys')
     alpha = clamp(Math.min(t / 0.5, (6 - t) / 0.8), 0, 1)
   } else if (st.meter.isReady && st.meter.readyTime < 3.5 && st.resinUses === 0) {
-    msg = context.controls.isTouch ? 'resina pronta - toque RESINA' : 'resina pronta - tecla E'
+    msg = context.controls.isTouch ? tr('cleaning.resinReadyTouch') : tr('cleaning.resinReadyKeys')
     alpha = clamp(Math.min(st.meter.readyTime / 0.4, (3.5 - st.meter.readyTime) / 0.6), 0, 1)
   }
   if (!msg || alpha <= 0) return
@@ -1798,7 +1799,7 @@ function renderHud(ctx, context) {
   ctx.font = `${Math.round(9 * u)}px Georgia, serif`
   ctx.fillStyle = withAlpha(cream, 0.55)
   ctx.textAlign = 'right'
-  ctx.fillText('favo', dx - r2 - 8 * u, cy + 1)
+  ctx.fillText(tr('cleaning.comb'), dx - r2 - 8 * u, cy + 1)
   ctx.restore()
 }
 
@@ -1815,10 +1816,7 @@ function computeResult() {
   const score = Math.round(clamp(100 * (0.6 * dNorm + 0.25 * pestRatio + 0.15 * dmgNorm), 0, 100))
   const nd = st.delivered
   const nc = st.captured
-  let summary =
-    `${nd} ${nd === 1 ? 'detrito removido' : 'detritos removidos'}, ` +
-    `${nc} ${nc === 1 ? 'traça capturada' : 'traças capturadas'}, ` +
-    `favo ${Math.round(dmg)}% danificado`
-  if (st.resinUses > 0) summary += `; resina usada ${st.resinUses}×`
+  let summary = tr('cleaning.summary', { debris: nd, pests: nc, damage: Math.round(dmg) })
+  if (st.resinUses > 0) summary += tr('cleaning.summaryResin', { n: st.resinUses })
   return { score, summary }
 }
