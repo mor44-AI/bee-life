@@ -71,6 +71,21 @@ const ALARM_HELPERS = 5
 const ALARM_SLOW = 0.3 // intrusos desorientados pelo feromônio
 const CHARGE_PER_REPEL = 0.05
 
+// --- Pontuação arcade (context.score - ScoreSystem) ---------------------------
+// Formiga = normal, mosca forídea = great; repelir de novo em até CHAIN_WINDOW s
+// (ou vários de uma investida) = cadeia (+bônus). Alarme = base menor ('special').
+// Um turno médio tem só ~15-25 intrusos (ondas curtas), então as bases ficam
+// ~1,8× o sugerido em config.scoring.base para render ~targetShiftActionPoints
+// (calibrado por bot: dificuldade 0,57 ágil ≈ 1.800 / mediano ≈ 1.050-1.350; 0,7 ≈ 2.400).
+const SB = config.scoring.base
+const SCORE = {
+  ant: Math.round(SB.normal * 1.8),
+  fly: Math.round(SB.great * 1.8),
+  chainBonus: SB.small * 2,
+  alarm: Math.round(SB.small * 2.5),
+}
+const CHAIN_WINDOW = 1.1
+
 // --- Cores de barro / geoprópolis e casca (mutadas contra o papel) ----------
 const CLAY_LIGHT = mixColors('#BFA27A', P.paperCreamDark, 0.15)
 const CLAY_MID = mixColors('#8C6B4A', P.paperCreamDark, 0.12)
@@ -770,6 +785,7 @@ function resetState(data) {
     entranceShake: 0, breachFlash: 0,
     meter: createMeter({ chargeTime: lerp(34, 46, difficulty), duration: ALARM_TIME }),
     alarm: null, helpers: [],
+    score: null, free: !!data?.free, lastRepelT: -10,
     drag: null,
     player: {
       ctrl: null, facing: -Math.PI / 2, phase: 'ready', phaseT: 0, dir: { x: 0, y: -1 },
@@ -1106,6 +1122,7 @@ function strike(hx, hy) {
     f.spin = rand(-9, 9)
     burst(f.x, f.y, true)
   }
+  if (hitsForagers.length) st.score?.miss()
   const friendly = hitsForagers.length > 0
   st.hitStop = friendly ? 0.13 : 0.07
   st.shake = Math.max(st.shake, friendly ? 0.35 : 0.18)
@@ -1133,6 +1150,22 @@ function repel(o, ax, ay, byAlarm = false) {
   if (byAlarm) st.stats.byAlarm++
   else st.meter.add(CHARGE_PER_REPEL)
   burst(o.x, o.y, false)
+  awardRepel(o, byAlarm)
+}
+
+// Pontos no ponto do intruso repelido (popup + combo do ScoreSystem).
+function awardRepel(o, byAlarm) {
+  if (!st.score) return
+  const at = { x: o.x, y: o.y - 14 * (st.L?.s || 1) }
+  if (byAlarm) {
+    st.score.award(SCORE.alarm, { ...at, reason: 'score.reason.special' })
+    return
+  }
+  const base = o.kind === 'fly' ? SCORE.fly : SCORE.ant
+  const chain = st.time - st.lastRepelT <= CHAIN_WINDOW
+  st.lastRepelT = st.time
+  if (chain) st.score.award(base + SCORE.chainBonus, { ...at, reason: 'score.reason.chain' })
+  else st.score.award(base, { ...at, reason: o.kind === 'fly' ? 'score.reason.great' : undefined })
 }
 
 function burst(x, y, friendly) {
@@ -1147,8 +1180,10 @@ function breach(x, y, kind) {
     st.stats.repelled++
     st.stats.byAlarm++
     burst(cx, cy, false)
+    st.score?.award(SCORE.alarm, { x: cx, y: cy - 20 * (st.L?.s || 1), reason: 'score.reason.special' })
     return
   }
+  st.score?.miss()
   st.stats.breaches++
   st.stats['breach_' + kind] = (st.stats['breach_' + kind] || 0) + 1
   st.marks.push({ a: Math.atan2(y - cy, x - cx), seed: (Math.random() * 1e6) | 0 })
@@ -1551,7 +1586,38 @@ function render(context, ctx) {
       ctx.fillRect(0, 0, w, h)
     }
   }
+  if (st.free) drawFreeBadge(ctx, context.layout)
   context.controls?.render?.(ctx, context.layout)
+}
+
+// Selo discreto "Turno livre" no canto direito da faixa do HUD.
+function drawFreeBadge(ctx, UL) {
+  const bar = UL?.hudBar
+  if (!bar) return
+  const k = clamp(bar.h / 50, 0.9, 1.4)
+  const label = t('guard.freeShift')
+  ctx.save()
+  ctx.globalAlpha = ease(clamp(st.clock / 1.1, 0, 1), 'easeInOutCubic')
+  ctx.font = `italic 600 ${Math.round(11 * k)}px Georgia, serif`
+  ctx.textAlign = 'right'
+  ctx.textBaseline = 'middle'
+  const bw = ctx.measureText(label).width + 16 * k
+  const bh = 20 * k
+  const bx = bar.x + bar.w - 10 - bw
+  const cy = bar.y + bar.h / 2
+  ctx.fillStyle = withAlpha(P.paperCreamLight, 0.85)
+  ctx.strokeStyle = withAlpha(INK_LINE, 0.55)
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 2])
+  ctx.beginPath()
+  if (ctx.roundRect) ctx.roundRect(bx, cy - bh / 2, bw, bh, bh / 2)
+  else ctx.rect(bx, cy - bh / 2, bw, bh)
+  ctx.fill()
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.fillStyle = withAlpha(INK_LINE, 0.8)
+  ctx.fillText(label, bx + bw - 8 * k, cy + 0.5)
+  ctx.restore()
 }
 
 // Pulso do feromônio: anéis técnicos concêntricos (com marcas de escala) saindo
@@ -2009,6 +2075,7 @@ export default {
   id: 'guard',
   enter(context, data) {
     resetState(data)
+    st.score = context.score ?? null
     context.controls?.configure?.({
       showAction: true,
       showSpecial: true,

@@ -13,6 +13,17 @@
 //             (imóveis e sem roer o favo por ~6 s).
 //   Pegar detrito / capturar larva = encostar.
 //
+// Invasões de formigas (modo ataque): ondas de 2-5 formigas entram pela entrada
+// (alarme: a entrada pisca em brasa, a borda da cena tinge, palavra "Invasão!").
+// Elas vão atrás de detritos no chão (roubam) ou de células de cria (roem o favo
+// e levam a cria). A investida acerta a formiga: 2 acertos derrotam (1 se
+// embalsamada pela resina). Carregando detrito a abelha não investe (e fica
+// lenta) - escolha tática entre entregar e defender.
+//
+// Pontos (context.score): entrega = normal, traça = great, acerto em formiga =
+// small, formiga derrotada = great, onda repelida sem perdas = perfect; miss() em
+// queda de carga, roubo de formiga e a cada 5% de dano novo no favo.
+//
 // Mundo em coordenadas CANÔNICAS (entrada à esquerda, favo se estendendo para a
 // direita). No retrato (design principal) o mundo é girado 90° para caber em
 // context.layout.playfield com a entrada no topo; em paisagem fica centralizado.
@@ -27,7 +38,7 @@ import { create as createMeter } from '../../engine/SpecialMeter.js'
 import { ease } from '../../engine/tween.js'
 import { createFlightPose, createCarryingPose, drawBeeBody } from '../../art/bee.js'
 import { drawHiveInterior, drawComb } from '../../art/hive.js'
-import { createWaxMothLarvaPose, drawWaxMothLarva } from '../../art/creatures.js'
+import { createWaxMothLarvaPose, drawWaxMothLarva, createAntPose, drawAnt } from '../../art/creatures.js'
 import {
   seededRandom,
   seedFromString,
@@ -51,6 +62,14 @@ const RESIN_DURATION = 6
 const WAVE_EXPAND = 0.9
 const WAVE_LIFE = 1.7
 const DASH_CD = 0.65
+// Invasões de formigas ("modo ataque").
+const ANT_HP = 2 // investidas para derrotar (1 se embalsamada pela resina)
+const INVASION_WARN = 1.3 // s de alarme na entrada antes das formigas entrarem
+const INVASION_FIRST = 8 // s até o alarme da primeira invasão (formigas ~9-11 s)
+const ANT_STAGGER = 0.45 // s entre formigas da mesma onda
+const BANNER_TIME = 2.2
+const ALERT = '#D9582B' // brasa de alarme (só no modo ataque)
+const SB = config.scoring.base
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v)
 const rand = (a, b) => a + Math.random() * (b - a)
@@ -504,7 +523,17 @@ function difficulty() {
     accelWax: 8.5 - 4.3 * e,
     deliverR: 62 + 34 * (1 - D),
     capR: 28 + 10 * (1 - D),
+    // Formigas
+    antInterval: 13 - 5 * e, // s entre o fim de uma onda e o alarme da próxima
+    antSpeed: 64 + 40 * e,
+    antChew: 3.2 - 1.2 * e, // s roendo uma célula antes de levar a cria
+    antDamageRate: 0.3 + 0.35 * e, // % do medidor por segundo, por formiga roendo
   }
+}
+
+function waveSize(dif) {
+  if (st.wavesStarted === 0) return 2
+  return clamp(2 + Math.floor(dif.e * 3.2 + rand(0, 1.3)), 2, 5)
 }
 
 // Relógio do turno: tempo de jogo + pausas de impacto (hit-stop), para que as
@@ -681,6 +710,14 @@ function doAction() {
   if (st.dashCd > 0) return
   let best = null
   let bestD = 150 * L.S
+  // Formigas têm prioridade (alcance maior): no modo ataque a investida mira nelas.
+  let antD = 190 * L.S
+  for (const a of st.ants) {
+    if (a.state === 'dead' || a.state === 'gone') continue
+    const dd = dist(a.x, a.y, pl.x, pl.y)
+    if (dd < antD) { antD = dd; best = a }
+  }
+  if (best) bestD = Math.min(bestD, antD * 0.8)
   for (const lv of st.larvae) {
     const e = lv.spawner.entities[0]
     if (!e) continue
@@ -699,7 +736,7 @@ function doAction() {
   else dash(Math.cos(st.heading), Math.sin(st.heading))
 }
 
-// Toque/clique curto em cima de uma traça: investida direto nela.
+// Toque/clique curto em cima de uma traça ou formiga: investida direto nela.
 function doTapOnLarva(tap) {
   if (st.carrying || st.dashCd > 0) return
   const L = st.L
@@ -707,6 +744,11 @@ function doTapOnLarva(tap) {
   const c = toCanon(tap.x, tap.y)
   let best = null
   let bestD = 48 * L.S
+  for (const a of st.ants) {
+    if (a.state === 'dead' || a.state === 'gone') continue
+    const dd = dist(a.x, a.y, c.x, c.y) * 0.85 // alvo um pouco mais generoso
+    if (dd < bestD) { bestD = dd; best = a }
+  }
   for (const lv of st.larvae) {
     const e = lv.spawner.entities[0]
     if (!e) continue
@@ -730,6 +772,318 @@ function waveRadius() {
   const L = st.L
   const maxR = Math.hypot(L.W, L.H) * 1.05
   return maxR * ease(clamp(st.wave.t / WAVE_EXPAND, 0, 1), 'easeOutCubic')
+}
+
+// ---------------------------------------------------------------------------
+// Pontuação arcade (coordenadas canônicas -> tela para o popup)
+// ---------------------------------------------------------------------------
+
+function award(base, x, y, reason) {
+  const score = st.ctx?.score
+  if (!score?.award) return
+  const p = toScreen(x, y)
+  score.award(base, reason ? { x: p.x, y: p.y, reason: `score.reason.${reason}` } : { x: p.x, y: p.y })
+}
+
+function miss() {
+  st.ctx?.score?.miss?.()
+}
+
+// ---------------------------------------------------------------------------
+// Formigas invasoras
+// ---------------------------------------------------------------------------
+
+function aliveAnts() {
+  return st.ants.filter((a) => a.state !== 'dead')
+}
+
+function startInvasion(dif) {
+  const total = waveSize(dif)
+  st.invasion = { phase: 'warn', t: 0, banner: 0, wave: { total, spawned: 0, defeated: 0, stolen: 0, spawnT: ANT_STAGGER } }
+  st.wavesStarted++
+  shake(2 * st.L.S, 0.2)
+}
+
+function spawnAnt(wave) {
+  const L = st.L
+  const S = L.S
+  const E = L.entrance
+  const ant = {
+    wave,
+    x: E.x - 6 * S,
+    y: E.y + rand(-12, 12) * S,
+    heading: rand(-0.3, 0.3),
+    state: 'enter',
+    stateT: 0,
+    target: null,
+    hp: ANT_HP,
+    stun: 0,
+    kx: 0,
+    ky: 0,
+    hitCd: 0,
+    flash: 0,
+    speedK: rand(0.88, 1.12),
+    anim: rand(0, 10),
+    seed: 1 + Math.floor(Math.random() * 999),
+    loot: null,
+    chewT: 0,
+    markT: 0,
+    resined: false,
+    resinAt: 0,
+    deadT: 0,
+    spin: 0,
+    wob: rand(0, TAU),
+  }
+  if (st.meter.isActive && (!st.wave || st.wave.t >= WAVE_EXPAND)) {
+    ant.resined = true
+    ant.resinAt = st.time
+  }
+  st.ants.push(ant)
+  wave.spawned++
+  st.antsSpawned++
+}
+
+function pickAntTarget(ant) {
+  const L = st.L
+  const S = L.S
+  const free = st.debris.filter((d) => d.state === 'floor' && !st.ants.some((a) => a !== ant && a.target?.debris === d))
+  if (free.length && Math.random() < 0.55) {
+    // Detrito mais próximo da formiga (e da entrada: rota curta de fuga).
+    let best = free[0]
+    let bestD = Infinity
+    for (const d of free) {
+      const dd = dist(d.x, d.y, ant.x, ant.y)
+      if (dd < bestD) { bestD = dd; best = d }
+    }
+    ant.target = { x: best.x, y: best.y, debris: best }
+  } else {
+    const p = randomDiscPoint(L.W * 0.26, 90 * S, 0.78)
+    ant.target = { x: p.x, y: p.y, debris: null }
+  }
+  ant.state = 'seek'
+  ant.stateT = 0
+}
+
+function releaseLoot(ant) {
+  const loot = ant.loot
+  ant.loot = null
+  if (!loot || loot === 'brood') return
+  const L = st.L
+  const d = loot
+  const tx = clamp(ant.x + rand(-26, 26) * L.S, L.bounds.x + 10, L.bounds.x + L.bounds.width - 10)
+  const ty = clamp(ant.y + rand(-26, 26) * L.S, L.bounds.y + 10, L.bounds.y + L.bounds.height - 10)
+  d.state = 'air'
+  d.anim = { t: 0, dur: 0.45, fx: d.x, fy: d.y, tx, ty, spin: rand(-6, 6), h: 20 * L.S }
+  d.cooldown = 0.25
+}
+
+// Investida acertou a formiga.
+function hitAnt(ant, dirX, dirY) {
+  const S = st.L.S
+  const len = Math.hypot(dirX, dirY) || 1
+  const nx = dirX / len
+  const ny = dirY / len
+  const wasResined = ant.resined
+  ant.hp = wasResined ? 0 : ant.hp - 1
+  ant.hitCd = 0.3
+  ant.flash = 0.25
+  const rescued = !!ant.loot
+  releaseLoot(ant)
+  // A abelha quica de leve e pode emendar outra investida logo.
+  st.impX *= 0.35
+  st.impY *= 0.35
+  st.dashCd = Math.min(st.dashCd, 0.28)
+  if (ant.hp <= 0) {
+    ant.state = 'dead'
+    ant.deadT = 0
+    ant.kx = nx * 420 * S
+    ant.ky = ny * 420 * S
+    ant.spin = rand(8, 14) * (Math.random() < 0.5 ? -1 : 1)
+    ant.wave.defeated++
+    st.antsDefeated++
+    st.defeatPulse = 0.6
+    st.hitStop = 0.08
+    st.meter.add(0.08)
+    shake(4 * S, 0.2)
+    fx('antDefeat', ant.x, ant.y, { dur: 0.8 })
+    award(SB.great, ant.x, ant.y, wasResined ? 'special' : rescued ? 'good' : 'great')
+  } else {
+    ant.state = ant.state === 'chew' || ant.state === 'flee' ? 'seek' : ant.state
+    if (ant.state === 'seek' && !ant.target) pickAntTarget(ant)
+    ant.chewT = 0
+    ant.stun = 0.7
+    ant.kx = nx * 330 * S
+    ant.ky = ny * 330 * S
+    st.hitStop = 0.05
+    shake(2.5 * S, 0.14)
+    fx('antHit', ant.x, ant.y, { dur: 0.45 })
+    award(rescued ? SB.normal : SB.small, ant.x, ant.y, rescued ? 'good' : null)
+  }
+}
+
+function antEscaped(ant) {
+  const L = st.L
+  ant.state = 'gone'
+  ant.wave.stolen++
+  st.antsStole++
+  if (ant.loot && ant.loot !== 'brood') ant.loot.state = 'out'
+  st.gauge.add(ant.loot === 'brood' ? 4 : 1.5)
+  st.dmgPulse = 0.7
+  st.stealPulse = 0.9
+  shake(3 * L.S, 0.2)
+  fx('stolen', L.entrance.x, L.entrance.y, { dur: 1 })
+  miss()
+}
+
+function updateInvasion(dt, dif, pl) {
+  const L = st.L
+  const S = L.S
+  const E = L.entrance
+  const inv = st.invasion
+
+  // Agenda / alarme / entrada escalonada.
+  if (!inv) {
+    st.nextInvasion -= dt
+    if (st.nextInvasion <= 0 && shiftClock() < SHIFT_DURATION - 8) startInvasion(dif)
+  } else {
+    inv.t += dt
+    inv.banner += dt
+    if (inv.phase === 'warn' && inv.t >= INVASION_WARN) {
+      inv.phase = 'active'
+      inv.t = 0
+    }
+    if (inv.phase === 'active') {
+      const w = inv.wave
+      w.spawnT += dt
+      while (w.spawned < w.total && w.spawnT >= ANT_STAGGER) {
+        w.spawnT -= ANT_STAGGER
+        spawnAnt(w)
+      }
+      if (w.spawned >= w.total && !st.ants.some((a) => a.wave === w && a.state !== 'dead' && a.state !== 'gone')) {
+        // Onda encerrada.
+        if (w.stolen === 0 && w.defeated === w.total) {
+          st.wavesRepelled++
+          fx('repelled', E.x, E.y, { dur: 1.4 })
+          award(SB.perfect, E.x + 40 * S, E.y, 'perfect')
+        }
+        st.invasion = null
+        st.nextInvasion = dif.antInterval * rand(0.85, 1.15)
+      }
+    }
+  }
+  const target = st.invasion ? 1 : 0
+  st.alertK += (target - st.alertK) * expLerp(target ? 6 : 2.5, dt)
+
+  // Movimento / comportamento.
+  const baseSpeed = dif.antSpeed * S
+  for (const a of st.ants) {
+    a.hitCd = Math.max(0, a.hitCd - dt)
+    a.flash = Math.max(0, a.flash - dt)
+    if (a.state === 'dead') {
+      a.deadT += dt
+      a.x += a.kx * dt
+      a.y += a.ky * dt
+      const dec = Math.exp(-4 * dt)
+      a.kx *= dec
+      a.ky *= dec
+      a.heading += a.spin * dt
+      a.spin *= Math.exp(-2 * dt)
+      continue
+    }
+    // Empurrão (knockback) e atordoamento.
+    if (Math.abs(a.kx) + Math.abs(a.ky) > 1) {
+      a.x = clamp(a.x + a.kx * dt, L.bounds.x, L.bounds.x + L.bounds.width)
+      a.y = clamp(a.y + a.ky * dt, L.bounds.y, L.bounds.y + L.bounds.height)
+      const dec = Math.exp(-6 * dt)
+      a.kx *= dec
+      a.ky *= dec
+    }
+    if (a.stun > 0) { a.stun -= dt; a.anim += dt * 2; continue }
+    if (a.resined) { a.anim += dt * 0.3; continue }
+    a.stateT += dt
+    let goal = null
+    let speed = baseSpeed * a.speedK
+    if (a.state === 'enter') {
+      goal = { x: E.x + 80 * S, y: a.y }
+      if (a.stateT > 0.55) pickAntTarget(a)
+    } else if (a.state === 'seek') {
+      if (!a.target) pickAntTarget(a)
+      const d = a.target.debris
+      if (d) {
+        if (d.state !== 'floor') { pickAntTarget(a); continue }
+        a.target.x = d.x
+        a.target.y = d.y
+      }
+      goal = a.target
+      if (dist(a.x, a.y, goal.x, goal.y) < 9 * S) {
+        if (d) {
+          d.state = 'stolen'
+          a.loot = d
+          a.state = 'flee'
+        } else {
+          a.state = 'chew'
+          a.chewT = 0
+        }
+        a.stateT = 0
+        goal = null
+      }
+    } else if (a.state === 'chew') {
+      a.chewT += dt
+      a.anim += dt * 4
+      a.markT -= dt
+      if (a.markT <= 0) {
+        a.markT = 0.45
+        const ang = rand(0, TAU)
+        const r = rand(3, 9) * S
+        addMark(a.x + Math.cos(a.heading) * 6 * S, a.y + Math.sin(a.heading) * 6 * S, a.x + Math.cos(ang) * r, a.y + Math.sin(ang) * r)
+      }
+      if (a.chewT >= dif.antChew) {
+        a.loot = 'brood'
+        a.state = 'flee'
+        a.stateT = 0
+        fx('pickup', a.x, a.y, { dur: 0.45 })
+      }
+    } else if (a.state === 'flee') {
+      goal = { x: E.x - 4 * S, y: E.y }
+      speed *= 0.92
+      if (dist(a.x, a.y, E.x, E.y) < 14 * S) { antEscaped(a); continue }
+    }
+    if (goal) {
+      const dx = goal.x - a.x
+      const dy = goal.y - a.y
+      const dd = Math.hypot(dx, dy) || 1
+      // Andar serpenteado de formiga.
+      const wig = Math.sin(st.time * 7 + a.wob) * 0.35
+      const ang = Math.atan2(dy, dx) + wig
+      const step = Math.min(dd, speed * dt)
+      a.x += Math.cos(ang) * step
+      a.y += Math.sin(ang) * step
+      a.heading = angleLerp(a.heading, ang, expLerp(10, dt))
+      a.anim += dt * 1.6
+    }
+    if (a.loot && a.loot !== 'brood') {
+      a.loot.x = a.x + Math.cos(a.heading) * 13 * S
+      a.loot.y = a.y + Math.sin(a.heading) * 13 * S
+      a.loot.rot = a.heading
+    }
+  }
+
+  // Investida acerta formigas.
+  if (st.dashT > 0) {
+    const hitR = 30 * S
+    for (const a of st.ants) {
+      if (a.state === 'dead' || a.state === 'gone' || a.hitCd > 0) continue
+      if (dist(a.x, a.y, pl.x, pl.y) < hitR) {
+        const dx = a.x - pl.x
+        const dy = a.y - pl.y
+        const useImp = Math.hypot(st.impX, st.impY) > 40 * S
+        hitAnt(a, useImp ? st.impX + dx * 2 : dx, useImp ? st.impY + dy * 2 : dy)
+        break
+      }
+    }
+  }
+
+  st.ants = st.ants.filter((a) => a.state !== 'gone' && !(a.state === 'dead' && a.deadT > 0.8))
 }
 
 // ---------------------------------------------------------------------------
@@ -787,6 +1141,19 @@ export default {
       capturePulse: 0,
       wave: null,
       viewKey: '',
+      ctx: context,
+      free: !!data?.free,
+      ants: [],
+      invasion: null,
+      nextInvasion: INVASION_FIRST,
+      wavesStarted: 0,
+      wavesRepelled: 0,
+      antsSpawned: 0,
+      antsDefeated: 0,
+      antsStole: 0,
+      alertK: 0,
+      defeatPulse: 0,
+      stealPulse: 0,
     }
     st.gauge = createGauge({ rate: 0, max: 100, min: 0, thresholds: { restless: 0.25, critical: 0.5 } })
     st.meter = createMeter({ chargeTime: 50, duration: RESIN_DURATION })
@@ -848,6 +1215,10 @@ export default {
       }
       for (const w of st.warnings) { w.x *= kx; w.y *= ky }
       if (st.wave) { st.wave.x *= kx; st.wave.y *= ky }
+      for (const a of st.ants) {
+        a.x *= kx; a.y *= ky
+        if (a.target) { a.target.x *= kx; a.target.y *= ky }
+      }
       st.fx = []
       buildForagerSpawners()
     }
@@ -880,6 +1251,8 @@ export default {
     st.dmgPulse = Math.max(0, st.dmgPulse - dt)
     st.tallyPulse = Math.max(0, st.tallyPulse - dt)
     st.capturePulse = Math.max(0, st.capturePulse - dt)
+    st.defeatPulse = Math.max(0, st.defeatPulse - dt)
+    st.stealPulse = Math.max(0, st.stealPulse - dt)
     if (st.hitStop > 0) {
       // o quadro inteiro fica parado: conta todo o dt no relógio do turno
       st.hitStop -= dt
@@ -894,6 +1267,7 @@ export default {
     st.meter.update(dt)
     if (st.meter.justEnded) {
       for (const lv of st.larvae) lv.resined = false
+      for (const a of st.ants) a.resined = false
     }
     if (st.pendingSpecial) {
       st.pendingSpecial = false
@@ -908,6 +1282,13 @@ export default {
             lv.resined = true
             lv.resinAt = st.time
             fx('resin', lv.dx, lv.dy, { dur: 0.7 })
+          }
+        }
+        for (const a of st.ants) {
+          if (!a.resined && a.state !== 'dead' && dist(a.x, a.y, st.wave.x, st.wave.y) <= R) {
+            a.resined = true
+            a.resinAt = st.time
+            fx('resin', a.x, a.y, { dur: 0.7 })
           }
         }
       }
@@ -1034,6 +1415,7 @@ export default {
         if (hadCargo && Math.random() < dif.dropChance) {
           st.stun = 0.4
           dropCarried(nx, ny, true)
+          miss()
         } else {
           st.stun = hadCargo ? 0.22 : 0.18
           shake(2.5 * S, 0.15)
@@ -1087,6 +1469,7 @@ export default {
         if (dist(d.x, d.y, pl.x, pl.y) < (30 + 8 * (1 - st.D)) * S) {
           d.state = 'carried'
           st.carrying = d
+          d.pickedAt = st.time
           fx('pickup', d.x, d.y, { dur: 0.45 })
         }
       }
@@ -1108,6 +1491,8 @@ export default {
         st.hitStop = 0.05
         st.meter.add(0.1)
         fx('deliver', L.entrance.x, L.entrance.y, { dur: 1.1 })
+        const quick = st.time - (d.pickedAt ?? st.time) < 3.2
+        award(SB.normal, L.entrance.x + 30 * S, L.entrance.y - 18 * S, quick ? 'fast' : null)
       }
     }
 
@@ -1205,19 +1590,25 @@ export default {
         st.meter.add(0.12)
         shake(3.5 * S, 0.18)
         fx('capture', lv.dx, lv.dy, { dur: 0.9, heading: lv.heading, seed: lv.seed })
+        award(SB.great, lv.dx, lv.dy, lv.resined ? 'special' : lv.age < 4 ? 'fast' : 'great')
         lv.dead = true
       }
     }
     st.larvae = st.larvae.filter((lv) => !lv.dead)
 
-    // ---- Dano (traças embalsamadas não roem) ----
+    // ---- Formigas invasoras ----
+    updateInvasion(dt, dif, pl)
+
+    // ---- Dano (traças embalsamadas não roem; formigas roendo células também) ----
     const active = st.larvae.filter((lv) => !lv.resined).length
-    st.gauge.setRate(active * dif.damageRate)
+    const chewing = st.ants.filter((a) => a.state === 'chew' && !a.resined && a.stun <= 0).length
+    st.gauge.setRate(active * dif.damageRate + chewing * dif.antDamageRate)
     st.gauge.update(dt)
     const step = Math.floor(st.gauge.value / 5)
     if (step > st.lastDmgStep) {
       st.lastDmgStep = step
       st.dmgPulse = 0.7
+      miss()
     }
   },
 
@@ -1276,6 +1667,8 @@ export default {
       else drawWaxMothLarva(ctx, createWaxMothLarvaPose(lv.dx, lv.dy, lv.anim / 3, { rotation: lv.heading, scale: sc, seed: lv.seed }))
     }
 
+    renderAnts(ctx)
+
     // Abelhas do trânsito.
     for (const b of st.patrollers) drawSpriteBee(ctx, b.x, b.y, b.heading, b.variant, b.frame, b.fade, b.bump)
     for (const sp of st.foragers) {
@@ -1291,7 +1684,10 @@ export default {
     renderFx(ctx)
     ctx.restore()
 
+    renderAlertTint(ctx, context)
     renderHint(ctx, context)
+    renderInvasionBanner(ctx, context)
+    renderFreeBadge(ctx, context)
 
     if (shiftClock() >= SHIFT_DURATION) {
       const k = clamp(st.endT / END_FADE, 0, 1)
@@ -1345,6 +1741,30 @@ function renderEntranceGlow(ctx) {
       ctx.beginPath()
       ctx.moveTo(E.x + Math.cos(a) * dr, E.y + Math.sin(a) * dr)
       ctx.lineTo(E.x + Math.cos(a) * (dr + (i % 2 ? 3 : 6) * S), E.y + Math.sin(a) * (dr + (i % 2 ? 3 : 6) * S))
+      ctx.stroke()
+    }
+  }
+  // Alarme de invasão: anéis em brasa pulsando no orifício (pisca no aviso).
+  if (st.alertK > 0.01) {
+    const warn = st.invasion?.phase === 'warn'
+    const blink = warn ? (Math.sin(st.time * 18) > 0 ? 1 : 0.35) : 0.7 + 0.3 * Math.sin(st.time * 6)
+    const a = st.alertK * blink
+    const ag = ctx.createRadialGradient(E.x, E.y, 6 * S, E.x, E.y, 120 * S)
+    ag.addColorStop(0, withAlpha(ALERT, 0.45 * a))
+    ag.addColorStop(1, withAlpha(ALERT, 0))
+    ctx.fillStyle = ag
+    ctx.fillRect(E.x - 120 * S, E.y - 120 * S, 240 * S, 240 * S)
+    ctx.strokeStyle = withAlpha(ALERT, 0.9 * a)
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(E.x, E.y, 28 * S, 40 * S, 0, 0, TAU)
+    ctx.stroke()
+    for (let i = 0; i < 2; i++) {
+      const k = (st.time * 1.4 + i * 0.5) % 1
+      ctx.strokeStyle = withAlpha(ALERT, 0.7 * (1 - k) * st.alertK)
+      ctx.lineWidth = 1.4
+      ctx.beginPath()
+      ctx.ellipse(E.x, E.y, (28 + 60 * k) * S, (40 + 60 * k) * S, 0, 0, TAU)
       ctx.stroke()
     }
   }
@@ -1624,6 +2044,61 @@ function renderFx(ctx) {
         }
         break
       }
+      case 'antHit': {
+        ctx.strokeStyle = withAlpha(ALERT, 0.85 * (1 - k))
+        ctx.lineWidth = 1.6
+        for (let i = 0; i < 8; i++) {
+          const a = (i / 8) * TAU + 0.2
+          const r0 = (6 + 16 * ease(k, 'easeOutCubic')) * S
+          ctx.beginPath()
+          ctx.moveTo(f.x + Math.cos(a) * r0, f.y + Math.sin(a) * r0)
+          ctx.lineTo(f.x + Math.cos(a) * (r0 + 7 * S), f.y + Math.sin(a) * (r0 + 7 * S))
+          ctx.stroke()
+        }
+        break
+      }
+      case 'antDefeat': {
+        const r = (10 + 34 * ease(k, 'easeOutCubic')) * S
+        ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.9 * (1 - k))
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(f.x, f.y, r, 0, TAU)
+        ctx.stroke()
+        ctx.strokeStyle = withAlpha(ALERT, 0.6 * (1 - k))
+        ctx.lineWidth = 1
+        for (let i = 0; i < 12; i++) {
+          const a = (i / 12) * TAU
+          ctx.beginPath()
+          ctx.moveTo(f.x + Math.cos(a) * r * 0.6, f.y + Math.sin(a) * r * 0.6)
+          ctx.lineTo(f.x + Math.cos(a) * r * 1.15, f.y + Math.sin(a) * r * 1.15)
+          ctx.stroke()
+        }
+        break
+      }
+      case 'stolen': {
+        for (let i = 0; i < 2; i++) {
+          const kk = clamp(k * 1.3 - i * 0.2, 0, 1)
+          if (kk <= 0) continue
+          ctx.strokeStyle = withAlpha(ALERT, 0.8 * (1 - kk))
+          ctx.lineWidth = 2 - i * 0.6
+          ctx.beginPath()
+          ctx.arc(f.x, f.y, (20 + 50 * ease(kk, 'easeOutCubic')) * S, -Math.PI * 0.5, Math.PI * 0.5)
+          ctx.stroke()
+        }
+        break
+      }
+      case 'repelled': {
+        for (let i = 0; i < 3; i++) {
+          const kk = clamp(k * 1.3 - i * 0.15, 0, 1)
+          if (kk <= 0) continue
+          ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.85 * (1 - kk))
+          ctx.lineWidth = 2 - i * 0.5
+          ctx.beginPath()
+          ctx.arc(f.x, f.y, (30 + 150 * ease(kk, 'easeOutCubic')) * S, -Math.PI * 0.5, Math.PI * 0.5)
+          ctx.stroke()
+        }
+        break
+      }
       case 'pickup': {
         dottedRing(ctx, f.x, f.y, (12 + 14 * ease(k, 'easeOutCubic')) * S, withAlpha(PAL.sunHalo, 0.6 * (1 - k)), f.t)
         break
@@ -1644,6 +2119,191 @@ function renderFx(ctx) {
     }
     ctx.restore()
   }
+}
+
+function renderAnts(ctx) {
+  const S = st.L.S
+  const t = st.time
+  const sc = 1.75 * S
+  for (const a of st.ants) {
+    if (a.state === 'dead') {
+      const k = clamp(a.deadT / 0.8, 0, 1)
+      ctx.save()
+      ctx.globalAlpha = 1 - ease(k, 'easeInQuad')
+      drawAnt(ctx, createAntPose(a.x, a.y, a.anim, { rotation: a.heading, scale: sc * (1 - 0.3 * k), seed: a.seed }))
+      ctx.restore()
+      continue
+    }
+    const threat = a.state === 'chew' || a.state === 'flee'
+    // Marcador de alvo: anel em brasa (tracejado girando) + pontos de vida.
+    ctx.save()
+    const pulse = 0.5 + 0.5 * Math.sin(t * (threat ? 12 : 6) + a.wob)
+    ctx.strokeStyle = withAlpha(a.resined ? PAL.sunHalo : ALERT, 0.55 + 0.35 * pulse)
+    ctx.lineWidth = threat ? 1.8 : 1.3
+    ctx.setLineDash([4 * S, 3 * S])
+    ctx.lineDashOffset = -t * 20
+    ctx.beginPath()
+    ctx.arc(a.x, a.y, 22 * S, 0, TAU)
+    ctx.stroke()
+    ctx.setLineDash([])
+    for (let i = 0; i < ANT_HP; i++) {
+      const px = a.x + (i - (ANT_HP - 1) / 2) * 7 * S
+      const py = a.y - 27 * S
+      ctx.beginPath()
+      ctx.arc(px, py, 2.3 * S, 0, TAU)
+      if (i < a.hp) {
+        ctx.fillStyle = ALERT
+        ctx.fill()
+      } else {
+        ctx.strokeStyle = withAlpha(PAL.paperCreamLight, 0.6)
+        ctx.lineWidth = 1
+        ctx.stroke()
+      }
+    }
+    ctx.restore()
+
+    if (a.resined) {
+      ctx.save()
+      const g = ctx.createRadialGradient(a.x, a.y, 2, a.x, a.y, 30 * S)
+      g.addColorStop(0, withAlpha(PAL.sunGold, 0.5))
+      g.addColorStop(1, withAlpha(PAL.sunGold, 0))
+      ctx.fillStyle = g
+      ctx.beginPath()
+      ctx.arc(a.x, a.y, 30 * S, 0, TAU)
+      ctx.fill()
+      ctx.restore()
+    }
+    const wob = a.stun > 0 ? Math.sin(a.stun * 45) * 0.35 : a.state === 'chew' ? Math.sin(t * 30) * 0.08 : 0
+    drawAnt(ctx, createAntPose(a.x, a.y, a.anim, { rotation: a.heading + wob, scale: sc, seed: a.seed }))
+    if (a.flash > 0) {
+      ctx.save()
+      ctx.fillStyle = withAlpha('#FFFFFF', 0.6 * (a.flash / 0.25))
+      ctx.beginPath()
+      ctx.arc(a.x, a.y, 14 * S, 0, TAU)
+      ctx.fill()
+      ctx.restore()
+    }
+    if (a.resined) {
+      ctx.save()
+      ctx.translate(a.x, a.y)
+      ctx.rotate(a.heading)
+      ctx.fillStyle = withAlpha(PAL.caterpillarGold, 0.38)
+      ctx.beginPath()
+      ctx.ellipse(-3 * S, 0, 22 * S, 10 * S, 0, 0, TAU)
+      ctx.fill()
+      ctx.strokeStyle = withAlpha(PAL.sunHalo, 0.7)
+      ctx.lineWidth = 1
+      ctx.stroke()
+      ctx.restore()
+    }
+    if (a.loot === 'brood') {
+      // Cria roubada: larvinha pálida presa nas mandíbulas.
+      const hx = a.x + Math.cos(a.heading) * 15 * S
+      const hy = a.y + Math.sin(a.heading) * 15 * S
+      ctx.save()
+      ctx.translate(hx, hy)
+      ctx.rotate(a.heading + Math.PI / 2)
+      ctx.fillStyle = '#F0E6CC'
+      ctx.beginPath()
+      ctx.ellipse(0, 0, 6 * S, 3.6 * S, 0, 0, TAU)
+      ctx.fill()
+      ctx.strokeStyle = withAlpha(INK_LINE, 0.8)
+      ctx.lineWidth = 0.9
+      ctx.stroke()
+      ctx.restore()
+    }
+  }
+}
+
+// Borda da cena tinge em brasa enquanto houver invasão (coordenadas de tela).
+function renderAlertTint(ctx, context) {
+  if (st.alertK < 0.01 && st.stealPulse <= 0) return
+  const lay = context.layout
+  const W = lay.width
+  const H = lay.height
+  const pulse = st.invasion?.phase === 'warn' ? 0.6 + 0.4 * Math.sin(st.time * 18) : 0.8 + 0.2 * Math.sin(st.time * 5)
+  const a = 0.26 * st.alertK * pulse + 0.2 * (st.stealPulse / 0.9)
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) * 0.55)
+  g.addColorStop(0, withAlpha(ALERT, 0))
+  g.addColorStop(1, withAlpha(ALERT, clamp(a, 0, 0.5)))
+  ctx.save()
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, W, H)
+  ctx.restore()
+}
+
+// "Invasão!" grande no começo de cada onda; depois, um selo compacto com as formigas restantes.
+function renderInvasionBanner(ctx, context) {
+  const inv = st.invasion
+  if (!inv || shiftClock() >= SHIFT_DURATION) return
+  const lay = context.layout
+  const pf = st.view.pf
+  const u = clamp(lay.uiScale || 1, 0.85, 1.3)
+  const word = tr('cleaning.invasion')
+  const x = pf.x + pf.w / 2
+  ctx.save()
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  if (inv.banner < BANNER_TIME) {
+    const k = inv.banner / BANNER_TIME
+    const alpha = clamp(Math.min(inv.banner / 0.15, (1 - k) / 0.25), 0, 1)
+    const pop = 1 + 0.25 * (1 - ease(clamp(inv.banner / 0.3, 0, 1), 'easeOutBack'))
+    const y = pf.y + pf.h * 0.2
+    ctx.globalAlpha = alpha
+    ctx.translate(x, y)
+    ctx.scale(pop, pop)
+    ctx.font = `italic 700 ${Math.round(30 * u)}px Georgia, serif`
+    const w = ctx.measureText(word).width + 36 * u
+    ctx.fillStyle = 'rgba(26, 14, 8, 0.78)'
+    ctx.fillRect(-w / 2, -22 * u, w, 44 * u)
+    ctx.strokeStyle = ALERT
+    ctx.lineWidth = 2
+    ctx.strokeRect(-w / 2 + 1, -22 * u + 1, w - 2, 44 * u - 2)
+    ctx.fillStyle = Math.sin(inv.banner * 16) > -0.3 ? '#F7C8A8' : ALERT
+    ctx.fillText(word, 0, 1)
+  } else {
+    const left = aliveAnts().length + (inv.wave.total - inv.wave.spawned)
+    const msg = `${word} ×${left}`
+    ctx.font = `italic 700 ${Math.round(14 * u)}px Georgia, serif`
+    const w = ctx.measureText(msg).width + 20 * u
+    // Canto superior direito (o centro do topo é do selo de combo do ScoreSystem).
+    const cx = pf.x + pf.w - 8 * u - w / 2
+    const y = pf.y + 14 * u
+    ctx.globalAlpha = 0.85 + 0.15 * Math.sin(st.time * 6)
+    ctx.fillStyle = 'rgba(26, 14, 8, 0.7)'
+    ctx.fillRect(cx - w / 2, y - 11 * u, w, 22 * u)
+    ctx.strokeStyle = withAlpha(ALERT, 0.8)
+    ctx.lineWidth = 1
+    ctx.strokeRect(cx - w / 2 + 0.5, y - 11 * u + 0.5, w - 1, 22 * u - 1)
+    ctx.fillStyle = '#F7C8A8'
+    ctx.fillText(msg, cx, y + 1)
+  }
+  ctx.restore()
+}
+
+// Selo discreto de turno livre (canto inferior esquerdo do campo).
+function renderFreeBadge(ctx, context) {
+  if (!st.free) return
+  const lay = context.layout
+  const pf = st.view.pf
+  const u = clamp(lay.uiScale || 1, 0.85, 1.3)
+  const msg = tr('cleaning.freeShift')
+  ctx.save()
+  ctx.font = `italic ${Math.round(11 * u)}px Georgia, serif`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  const w = ctx.measureText(msg).width + 14 * u
+  const x = pf.x + 8 * u
+  const y = pf.y + 14 * u
+  ctx.globalAlpha = 0.7
+  ctx.fillStyle = 'rgba(26, 20, 16, 0.6)'
+  ctx.fillRect(x, y - 9 * u, w, 18 * u)
+  ctx.strokeStyle = withAlpha(PAL.sunGold, 0.6)
+  ctx.lineWidth = 1
+  ctx.strokeRect(x + 0.5, y - 9 * u + 0.5, w - 1, 18 * u - 1)
+  ctx.fillStyle = PAL.paperCreamLight
+  ctx.fillText(msg, x + 7 * u, y + 1)
+  ctx.restore()
 }
 
 // ---------------------------------------------------------------------------
@@ -1773,6 +2433,21 @@ function renderHud(ctx, context) {
   ctx.font = `${Math.round(17 * u + capK * 3)}px Georgia, serif`
   ctx.fillText(String(st.captured), x2 + iconR + 6 * u, cy + 1)
 
+  // Formigas derrotadas (aparece a partir da primeira invasão).
+  if (st.wavesStarted > 0) {
+    const defK = st.defeatPulse / 0.6
+    const x3 = x2 + iconR * 2 + 36 * u
+    ctx.strokeStyle = withAlpha(st.alertK > 0.3 ? ALERT : cream, 0.45 + 0.55 * Math.max(defK, st.alertK * 0.5))
+    ctx.beginPath()
+    ctx.arc(x3, cy, iconR + defK * 3 * u, 0, TAU)
+    ctx.stroke()
+    drawAnt(ctx, createAntPose(x3, cy, 0, { rotation: -0.5, scale: 0.85 * u, seed: 4 }))
+    ctx.fillStyle = cream
+    ctx.textAlign = 'left'
+    ctx.font = `${Math.round(17 * u + defK * 3)}px Georgia, serif`
+    ctx.fillText(String(st.antsDefeated), x3 + iconR + 6 * u, cy + 1)
+  }
+
   // Transferidor do dano no favo (único uso de accentPink fora do botão pronto).
   const r2 = Math.min(hb.h * 0.36, 18 * u)
   const dx = hb.x + hb.w - 12 * u - r2
@@ -1824,10 +2499,14 @@ function computeResult() {
   const dNorm = Math.pow(clamp(st.delivered / goal, 0, 1), 1.5)
   const pestRatio = st.pestsSpawned > 0 ? clamp(st.captureValue / st.pestsSpawned, 0, 1) : 1
   const dmgNorm = clamp(1 - dmg / 25, 0, 1)
-  const score = Math.round(clamp(100 * (0.6 * dNorm + 0.25 * pestRatio + 0.15 * dmgNorm), 0, 100))
+  // Defesa: derrotadas valem 1, roubos 0, formigas ainda dentro no fim valem 0,4.
+  const inside = Math.max(0, st.antsSpawned - st.antsDefeated - st.antsStole)
+  const antRatio = st.antsSpawned > 0 ? clamp((st.antsDefeated + 0.4 * inside) / st.antsSpawned, 0, 1) : 1
+  const score = Math.round(clamp(100 * (0.48 * dNorm + 0.18 * pestRatio + 0.2 * antRatio + 0.14 * dmgNorm), 0, 100))
   const nd = st.delivered
   const nc = st.captured
   let summary = tr('cleaning.summary', { debris: nd, pests: nc, damage: Math.round(dmg) })
+  if (st.antsSpawned > 0) summary += tr('cleaning.summaryAnts', { n: st.antsDefeated })
   if (st.resinUses > 0) summary += tr('cleaning.summaryResin', { n: st.resinUses })
   return { score, summary }
 }

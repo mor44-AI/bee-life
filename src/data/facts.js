@@ -15,7 +15,10 @@
 //   factKey(id) -> 'facts.<id>'
 //   resetFacts({ storage } = {})  (testes)
 
-export const factCategories = ['biology', 'behavior', 'nest', 'colony', 'ecology', 'culture']
+export const factCategories = [
+  'biology', 'behavior', 'nest', 'colony', 'ecology', 'culture',
+  'pollination', 'city', 'vsApis', 'mandacaia', 'surprising',
+]
 
 export const FACTS = [
   { id: 'noSting', category: 'biology' },
@@ -23,6 +26,43 @@ export const FACTS = [
   { id: 'tropicalRange', category: 'ecology' },
   { id: 'jataiGuards', category: 'behavior' },
   { id: 'mandacaiaEntrance', category: 'nest' },
+  { id: 'involucrum', category: 'nest' },
+  { id: 'scentTrails', category: 'behavior' },
+  { id: 'pollinateNatives', category: 'pollination' },
+  { id: 'pollinateAcai', category: 'pollination' },
+  { id: 'buzzTomato', category: 'pollination' },
+  { id: 'strawberryJatai', category: 'pollination' },
+  { id: 'hollowTrees', category: 'ecology' },
+  { id: 'urbanJatai', category: 'city' },
+  { id: 'urbanMeliponary', category: 'city' },
+  { id: 'urbanGardens', category: 'city' },
+  { id: 'bioindicator', category: 'city' },
+  { id: 'apisIntroduced', category: 'vsApis' },
+  { id: 'africanized', category: 'vsApis' },
+  { id: 'wateryHoney', category: 'vsApis' },
+  { id: 'physogastricQueen', category: 'vsApis' },
+  { id: 'geneticCaste', category: 'vsApis' },
+  { id: 'gradualSwarm', category: 'vsApis' },
+  { id: 'massProvisioning', category: 'vsApis' },
+  { id: 'cellsOnce', category: 'vsApis' },
+  { id: 'smallerColonies', category: 'vsApis' },
+  { id: 'soundRecruitment', category: 'vsApis' },
+  { id: 'mandacaiaStripes', category: 'mandacaia' },
+  { id: 'mandacaiaGeopropolis', category: 'mandacaia' },
+  { id: 'mandacaiaSouth', category: 'mandacaia' },
+  { id: 'mandacaiaThreat', category: 'mandacaia' },
+  { id: 'mandacaiaGentle', category: 'mandacaia' },
+  { id: 'vultureBees', category: 'surprising' },
+  { id: 'robberLimao', category: 'surprising' },
+  { id: 'mummifyInvaders', category: 'surprising' },
+  { id: 'soldierJatai', category: 'surprising' },
+  { id: 'fireBee', category: 'surprising' },
+  { id: 'fungusFood', category: 'surprising' },
+  { id: 'undergroundNests', category: 'surprising' },
+  { id: 'mayaBees', category: 'culture' },
+  { id: 'tupiNames', category: 'culture' },
+  { id: 'lawConama', category: 'culture' },
+  { id: 'medicinalHoney', category: 'culture' },
 ]
 
 export const FACTS_STORAGE_KEY = 'bee-life.facts.v1'

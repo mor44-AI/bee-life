@@ -63,6 +63,21 @@ const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by)
 
 const SPECIAL = { chargeTime: 22, duration: 6, drop: 0.55, perfectBonus: 0.06, goodBonus: 0.025 }
 
+// Pontuação arcade (context.score - ScoreSystem): pontos por alimentação, na célula.
+// As alimentações são poucas e espaçadas (voo + janela + reabastecer: ~9-13 por
+// turno) e o combo quase nunca passa de ×1,5, então as bases ficam ~2× o sugerido
+// em config.scoring.base para um turno médio render ~targetShiftActionPoints
+// (calibrado por bot: preciso ≈ 2.000, mediano ≈ 1.400-1.600).
+const SB = config.scoring.base
+const SCORE = {
+  perfect: SB.perfect * 2, // janela perfeita
+  great: SB.great * 2, // borda da janela numa larva já inquieta/crítica
+  normal: Math.round(SB.normal * 2.4), // borda da janela numa larva calma
+  rescue: SB.great, // bônus extra ao salvar uma larva em fome crítica
+  special: SB.great * 1.5, // chamado das nutrizes (+ por larva atendida, até 4)
+  specialPer: SB.small * 1.5,
+}
+
 function buildDifficulty(difficulty = config.difficulty.training) {
   const d = clamp(Number.isFinite(difficulty) ? difficulty : config.difficulty.training, 0, 1)
   const L = (a, b) => a + (b - a) * d
@@ -733,8 +748,10 @@ function spawnNurse(larva, delay) {
 function activateSpecial() {
   if (S.phase !== 'play' || !S.meter.activate()) return
   let i = 0
+  let helped = 0
   for (const larva of S.larvae) {
     if (larva.state !== 'larva' || !cellOf(larva)) continue
+    if (larva.hunger.value > 18) helped++
     const delay = i++ * 0.07
     spawnNurse(larva, delay)
     larva.callDrop = { from: larva.hunger.value, to: larva.hunger.value * (1 - SPECIAL.drop), t: -delay - 0.45 }
@@ -744,6 +761,9 @@ function activateSpecial() {
   S.callFlash = 1
   const L = S.layout
   addFloater(L.comb.cx, L.comb.cy - L.comb.ry * 0.9, tr('feedLarvae.nurseCall'), P.sunHalo)
+  if (helped > 0) {
+    S.score?.award(SCORE.special + SCORE.specialPer * Math.min(helped, 4), { x: L.comb.cx, y: L.comb.cy - L.comb.ry * 0.55, reason: 'score.reason.special' })
+  }
 }
 
 function nursePosition(n, t) {
@@ -901,9 +921,11 @@ function handleAction() {
     S.wasteFlash = 1
     larva.twitch = 1
     addFloater(cell.x, cell.y - R * 1.2, tr('feedLarvae.waste'), '#E9D9B0')
+    S.score?.miss()
     return
   }
   const amount = result === 'perfect' ? S.D.perfectRelief : S.D.goodRelief
+  const hungerState = larva.hunger.state
   const before = larva.hunger.value
   larva.hunger.subtract(amount)
   larva.callDrop = null
@@ -916,13 +938,19 @@ function handleAction() {
     S.meter.add(SPECIAL.perfectBonus)
     S.shake = Math.max(S.shake, 2.5)
     burst(cell.x, cell.y, 'perfect', R)
-    addFloater(cell.x, cell.y - R * 1.25, tr('feedLarvae.perfect'), P.sunHalo)
+    // o rótulo "perfeito!" vem no popup de pontos (ScoreSystem)
+    S.score?.award(SCORE.perfect, { x: cell.x, y: cell.y - R * 0.9, reason: 'score.reason.perfect' })
   } else {
     S.stats.good += 1
     S.meter.add(SPECIAL.goodBonus)
     burst(cell.x, cell.y, 'good', R)
-    addFloater(cell.x, cell.y - R * 1.2, tr('feedLarvae.good'), P.leafSageHighlight)
+    const hungry = hungerState !== 'calm'
+    S.score?.award(hungry ? SCORE.great : SCORE.normal, {
+      x: cell.x, y: cell.y - R * 0.9, reason: hungry ? 'score.reason.great' : 'score.reason.good',
+    })
   }
+  // salvou uma larva em fome crítica: bônus extra, um pouco acima
+  if (hungerState === 'critical') S.score?.award(SCORE.rescue, { x: cell.x, y: cell.y - R * 1.9, reason: 'score.reason.bonus' })
 }
 
 function computeScore(st) {
@@ -998,6 +1026,8 @@ export default {
     S = {
       D,
       meter,
+      score: context.score ?? null,
+      free: !!data?.free,
       shiftIndex: data?.shiftIndex ?? 0,
       layoutSeed: 900 + ((data?.shiftIndex ?? 0) * 131) + Math.floor(Math.random() * 7),
       layout: null,
@@ -1311,6 +1341,7 @@ export default {
             burst(c.x, c.y, 'weak', c.size)
             addFloater(c.x, c.y - c.size * 1.3, larva.vitality <= 0 ? tr('feedLarvae.larvaLost') : tr('feedLarvae.weakened'), '#E9D9B0')
           }
+          S.score?.miss()
           if (larva.vitality <= 0) {
             larva.state = 'lost'
             S.stats.lost += 1
@@ -1723,6 +1754,33 @@ function drawHUD(ctx, L, reveal) {
       ctx.lineWidth = 1
       ctx.stroke()
       ctx.setLineDash([])
+    }
+  }
+
+  // selo discreto de turno livre, à direita da faixa
+  if (S.free) {
+    const label = tr('feedLarvae.freeShift')
+    ctx.font = `italic 600 ${Math.round(11 * k)}px Georgia, serif`
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    const bw = ctx.measureText(label).width + 16 * k
+    const bh = 20 * k
+    const bx = hud.x + hud.w - 10 - bw
+    const minX = sx + gap * n + 16 * k // não cobre as pastilhas de estoque
+    if (bx > minX) {
+      ctx.globalAlpha = reveal
+      ctx.fillStyle = withAlpha(P.paperCreamDark, 0.85)
+      ctx.strokeStyle = withAlpha(INK_LINE, 0.55)
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 2])
+      ctx.beginPath()
+      if (ctx.roundRect) ctx.roundRect(bx, cy - bh / 2, bw, bh, bh / 2)
+      else ctx.rect(bx, cy - bh / 2, bw, bh)
+      ctx.fill()
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = withAlpha(INK_LINE, 0.8)
+      ctx.fillText(label, bx + bw - 8 * k, cy + 0.5)
     }
   }
   ctx.restore()

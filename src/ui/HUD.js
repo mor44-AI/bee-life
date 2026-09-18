@@ -33,6 +33,14 @@
 //   Utilitários de desenho: createLayerCache(paint), createPaperBackdrop(opts),
 //     wrapText(ctx, text, maxWidth), drawPaperCard(ctx, x, y, w, h, opts),
 //     drawButton(ctx, rect, label, opts), pointInRect(p, rect), fadeScreen(ctx, w, h, alpha)
+//   Texto que precisa caber (curiosidades, resumos):
+//     fitParagraph(ctx, text, maxW, maxH, opts) -> { size, lh, lines, height, fits }
+//       quebra em linhas e encolhe a fonte (opts.size -> opts.minSize) até caber em maxH;
+//       só no limite corta a última linha com "…".
+//     measureContext() -> ctx 2D fora da tela (para medir texto em cálculos de layout)
+//     factLabel(fact, title?) -> 'VOCÊ SABIA? · MEIO AMBIENTE' (categoria de nextFact(),
+//       rótulo 'facts.category.<id>'; categoria sem rótulo -> só o título)
+//     drawFact(ctx, rect, fact, opts) -> rótulo pequeno + texto de t(fact.key) ajustado a rect
 //   createKeyWatcher(input, codes) - LEGADO (prefira anyKeyPressed); mantido por compat.
 
 import IndicatorBar, { UI, font, drawDial, drawScaleArc, drawDottedCircle, setLetterSpacing } from './IndicatorBar.js'
@@ -41,7 +49,7 @@ import { config } from '../data/config.js'
 import { RANK_ORDER } from '../systems/TaskSystem.js'
 import { drawPaperGrain, strokeHandDrawn, seedFromString } from '../art/textureUtils.js'
 import { drawBackground } from '../art/environment.js'
-import { t as tr } from '../i18n/index.js'
+import { t as tr, MODULES as I18N_MODULES } from '../i18n/index.js'
 
 const RANK_IDS = ['larva', 'cleaning', 'feedLarvae', 'feedQueen', 'guard']
 
@@ -238,6 +246,116 @@ export function wrapText(ctx, text, maxWidth) {
   }
   if (line) lines.push(line)
   return lines
+}
+
+let measureCtx = null
+/** Contexto 2D fora da tela para medir texto no cálculo de layout (null fora do navegador). */
+export function measureContext() {
+  if (!measureCtx && typeof document !== 'undefined') measureCtx = document.createElement('canvas').getContext('2d')
+  return measureCtx
+}
+
+/**
+ * Quebra `text` em linhas de até maxW e encolhe a fonte até caber em maxH.
+ * opts: { size = 15, minSize = 11, lineHeight = 1.3, style = 'italic', maxLines }
+ * Deixa ctx.font na fonte escolhida. Retorna { size, lh, lines, height, fits }.
+ */
+export function fitParagraph(ctx, text, maxW, maxH, opts = {}) {
+  const { size: start = 15, minSize = 11, lineHeight = 1.3, style = 'italic', maxLines = Infinity } = opts
+  let size = start
+  let lines
+  let lh
+  let limit
+  for (;;) {
+    ctx.font = font(size, { style })
+    lh = Math.round(size * lineHeight * 10) / 10
+    lines = wrapText(ctx, text, maxW)
+    limit = Math.max(1, Math.min(maxLines, Math.floor((maxH + 0.5) / lh)))
+    if (lines.length <= limit || size <= minSize) break
+    size = Math.max(minSize, size - 0.5)
+  }
+  const fits = lines.length <= limit
+  if (!fits) {
+    lines = lines.slice(0, limit)
+    let last = lines[limit - 1].replace(/[\s,.;:\-·]*$/, '') + '…'
+    while (ctx.measureText(last).width > maxW && last.includes(' ')) {
+      last = last.replace(/\s*\S+…$/, '').replace(/[\s,.;:\-·]*$/, '') + '…'
+    }
+    lines[limit - 1] = last
+  }
+  return { size, lh, lines, height: lines.length * lh, fits }
+}
+
+function hasKey(key) {
+  return Object.values(I18N_MODULES).some((mod) => mod?.pt && key in mod.pt)
+}
+
+/** Rótulo de uma curiosidade: título + categoria discreta (se houver rótulo traduzido). */
+export function factLabel(fact, title = tr('fact.didYouKnow')) {
+  const key = fact?.category ? `facts.category.${fact.category}` : ''
+  if (!key || !hasKey(key)) return title
+  return tr('fact.label', { title, category: tr(key).toUpperCase() })
+}
+
+// Métricas de um bloco de curiosidade dentro de uma largura: rótulo + parágrafo.
+function factMetrics(u, labelSize) {
+  const ls = labelSize ?? 11.5 * u
+  return { ls, gap: 7 * u }
+}
+
+/**
+ * Altura necessária para desenhar a curiosidade em `width` com fonte `size`.
+ * Útil para dimensionar o cartão antes de desenhar (usa measureContext()).
+ */
+export function measureFact(fact, width, opts = {}) {
+  const ctx = measureContext()
+  const u = opts.u ?? 1
+  const { ls, gap } = factMetrics(u, opts.labelSize)
+  const text = fact ? tr(fact.key) : ''
+  if (!ctx || !text) return ls + gap + 3 * 18 * u
+  const p = fitParagraph(ctx, text, width, Infinity, { size: opts.size ?? 15 * u, lineHeight: opts.lineHeight ?? 1.3 })
+  return ls + gap + p.height
+}
+
+/**
+ * Desenha a curiosidade `fact` ({ key, category } de nextFact()) dentro de rect:
+ * rótulo pequeno espaçado ("VOCÊ SABIA? · CATEGORIA") + texto em itálico que encolhe
+ * até caber. opts: { u = 1, title, align = 'left', size = 15u, minSize = 11,
+ * lineHeight = 1.3, alpha = 1, labelAlpha = 0.8, color = UI.ink, labelSize }
+ */
+export function drawFact(ctx, rect, fact, opts = {}) {
+  if (!fact) return null
+  const u = opts.u ?? 1
+  const { align = 'left', alpha = 1, labelAlpha = 0.8, color = UI.ink } = opts
+  const { ls, gap } = factMetrics(u, opts.labelSize)
+  const ax = align === 'center' ? rect.x + rect.w / 2 : rect.x
+  ctx.save()
+  const base = ctx.globalAlpha
+  ctx.fillStyle = color
+  ctx.textAlign = align
+  ctx.textBaseline = 'alphabetic'
+  let label = factLabel(fact, opts.title)
+  ctx.font = font(ls)
+  setLetterSpacing(ctx, 1.4)
+  let lsz = ls
+  while (lsz > 9 && ctx.measureText(label).width > rect.w) {
+    lsz -= 0.5
+    ctx.font = font(lsz)
+  }
+  if (ctx.measureText(label).width > rect.w) label = opts.title ?? tr('fact.didYouKnow')
+  ctx.globalAlpha = base * alpha * labelAlpha
+  ctx.fillText(label, ax, rect.y + ls)
+  setLetterSpacing(ctx, 0)
+  ctx.globalAlpha = base * alpha
+  const top = rect.y + ls + gap
+  const p = fitParagraph(ctx, tr(fact.key), rect.w, rect.y + rect.h - top, {
+    size: opts.size ?? 15 * u,
+    minSize: opts.minSize ?? 11,
+    lineHeight: opts.lineHeight ?? 1.3,
+  })
+  p.lines.forEach((line, i) => ctx.fillText(line, ax, top + p.size * 0.95 + i * p.lh))
+  ctx.restore()
+  return p
 }
 
 export function fadeScreen(ctx, w, h, alpha, color = '#1A1410') {

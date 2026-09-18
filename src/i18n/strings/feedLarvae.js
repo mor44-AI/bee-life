@@ -12,6 +12,7 @@ export default {
     'feedLarvae.weakened': 'enfraqueceu',
     'feedLarvae.shiftOver': 'turno encerrado',
     'feedLarvae.food': 'alimento',
+    'feedLarvae.freeShift': 'Turno livre',
     'feedLarvae.summaryFeeds': ({ feeds, perfect }) =>
       `${feeds} ${feeds === 1 ? 'alimentação' : 'alimentações'} (${perfect} ${perfect === 1 ? 'perfeita' : 'perfeitas'})`,
     'feedLarvae.summaryNoneWeak': ', nenhuma larva enfraquecida',
@@ -30,6 +31,7 @@ export default {
     'feedLarvae.weakened': 'weakened',
     'feedLarvae.shiftOver': 'shift over',
     'feedLarvae.food': 'food',
+    'feedLarvae.freeShift': 'Free shift',
     'feedLarvae.summaryFeeds': ({ feeds, perfect }) =>
       `${feeds} ${feeds === 1 ? 'feeding' : 'feedings'} (${perfect} perfect)`,
     'feedLarvae.summaryNoneWeak': ', no larvae weakened',

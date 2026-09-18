@@ -21,6 +21,7 @@ import {
   drawHint,
 } from '../ui/HUD.js'
 import { t as tr } from '../i18n/index.js'
+import { formatScore } from './EndOfMarco1State.js'
 
 const KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const T_ERASE = 1.0
@@ -294,6 +295,27 @@ export default {
       T.noteLines.forEach((line, i) => ctx.fillText(line, T.x, T.noteY + i * T.noteLH))
     }
     ctx.restore()
+
+    // Placar da vida até agora, discreto no alto da coluna do diagrama.
+    const total = context.score?.total
+    if (Number.isFinite(total)) {
+      ctx.save()
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'alphabetic'
+      ctx.fillStyle = UI.ink
+      ctx.globalAlpha = 0.6 * seg(t, 0.4, 1.2)
+      const text = tr('promotion.lifeScore', { n: formatScore(total) }).toUpperCase()
+      setLetterSpacing(ctx, 1.5)
+      let size = 12 * u
+      ctx.font = font(size)
+      while (size > 9 && ctx.measureText(text).width > M.diagW - 24) {
+        size -= 0.5
+        ctx.font = font(size)
+      }
+      ctx.fillText(text, M.diagX + M.diagW / 2, M.S.y + 10 * u + size)
+      setLetterSpacing(ctx, 0)
+      ctx.restore()
+    }
 
     const ready = seg(t, T_READY - 0.2, T_READY + 0.6)
     if (ready > 0) {

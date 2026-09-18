@@ -3,7 +3,8 @@
 // empilhados na metade inferior (zona do polegar). Em tela larga: título e botões
 // numa coluna à esquerda, prancha à direita.
 // Toque/clique ativa; teclado (setas + Enter, Esc volta) continua funcionando no PC.
-// "Ver abertura" (link discreto, mesmo alvo de toque ≥ 56px) reabre o vídeo de abertura.
+// "Ranking" e "Ver abertura" (links discretos lado a lado, mesmo alvo de toque ≥ 56px):
+// o primeiro abre a tabela do ranking num painel (só leitura); o segundo reabre o vídeo.
 // "Continuar" fica visualmente desabilitado sem save. "Novo Jogo" com save existente
 // pede confirmação de sobrescrita. Configurações de áudio persistentes.
 
@@ -24,10 +25,12 @@ import {
   drawHint,
 } from '../ui/HUD.js'
 import { t as tr, getLang, setLang } from '../i18n/index.js'
+import leaderboard from '../systems/Leaderboard.js'
+import { drawLeaderboard, formatScore } from './EndOfMarco1State.js'
 
 const backdrop = createPaperBackdrop({ seed: 31 })
 let t = 0
-let mode = 'main' // 'main' | 'confirm' | 'settings'
+let mode = 'main' // 'main' | 'confirm' | 'settings' | 'ranking'
 let selected = 0
 let modalSelected = 1
 let lastPointer = null
@@ -38,6 +41,7 @@ function mainItems() {
     { id: 'new', label: tr('menu.newGame') },
     { id: 'continue', label: tr('menu.continue'), disabled: !hasSave, caption: hasSave ? '' : tr('menu.noSave') },
     { id: 'settings', label: tr('menu.settings') },
+    { id: 'ranking', label: tr('menu.ranking'), discreet: true },
     { id: 'replay', label: tr('menu.replayIntro'), discreet: true },
   ]
 }
@@ -94,11 +98,17 @@ function computeLayout(context) {
     const R = Math.max(40, Math.min(S.w * 0.3, avail / 2.6))
     plate = { cx: S.x + S.w / 2, cy: plateTop + avail / 2 + R * 0.08, R }
   }
+  // Links discretos lado a lado logo abaixo da pilha, sem o espaçamento extra dos botões.
+  const linkY = btnY0 + 3 * (btnH + gap) - gap
+  const linkGap = 8
+  const linkW = (btnW - linkGap) / 2
+  let linkIndex = 0
   const buttons = mainItems().map((item, i) => {
-    const y = btnY0 + i * (btnH + gap)
-    // Link discreto logo abaixo da pilha, sem o espaçamento extra dos botões.
-    if (item.discreet) return { ...item, rect: { x: btnX + btnW * 0.2, y: y - gap, w: btnW * 0.6, h: linkH } }
-    return { ...item, rect: { x: btnX, y, w: btnW, h: btnH } }
+    if (item.discreet) {
+      const k = linkIndex++
+      return { ...item, rect: { x: btnX + k * (linkW + linkGap), y: linkY, w: linkW, h: linkH } }
+    }
+    return { ...item, rect: { x: btnX, y: btnY0 + i * (btnH + gap), w: btnW, h: btnH } }
   })
 
   // Modal
@@ -192,8 +202,39 @@ function computeLayout(context) {
     ]
     if (!audioOk) modalButtons.slice(0, 4).forEach(b => { b.disabled = true })
   }
+  let board = null
+  if (mode === 'ranking') {
+    const rows = leaderboard.top(10).map((e, i) => ({ rank: i + 1, name: e.name, score: e.score, you: !e.dummy }))
+    const best = leaderboard.best()
+    const titleSize = Math.max(18, Math.min(23 * u, 28))
+    const noteSize = Math.max(12, 13 * u)
+    const headH = pad * 0.6 + titleSize * 1.1 + (best > 0 ? noteSize * 1.6 : 0) + 10 * u
+    const btnArea = mbH + pad
+    const maxH = S.h - 24
+    const n = Math.max(1, rows.length)
+    let columns = 1
+    let rowH = Math.min(32 * u, (maxH - headH - btnArea - 8 * u) / n)
+    card.w = Math.min(460, S.w - 32)
+    // Tela baixa (celular deitado): duas colunas de 5.
+    if (rowH < 22 && S.w >= 480) {
+      columns = 2
+      card.w = Math.min(640, S.w - 32)
+      rowH = Math.min(32 * u, (maxH - headH - btnArea - 8 * u) / Math.ceil(n / 2))
+    }
+    const tableH = rowH * Math.ceil(n / columns)
+    card.h = headH + tableH + 8 * u + btnArea
+    card.x = S.x + (S.w - card.w) / 2
+    card.y = S.y + Math.max(12, (S.h - card.h) / 2)
+    const inset = Math.max(12, 16 * u)
+    board = {
+      rows, best, columns, titleSize, noteSize, titleBase: pad * 0.6 + titleSize * 0.9,
+      table: { x: card.x + inset, y: card.y + headH, w: card.w - inset * 2, h: tableH },
+    }
+    const w = Math.min(card.w - pad * 2, 240 * u)
+    modalButtons = [{ id: 'back', label: tr('menu.back'), rect: { x: card.x + (card.w - w) / 2, y: card.y + card.h - pad - mbH, w, h: mbH } }]
+  }
   const langToggle = langToggleRect(S, u)
-  return { L, S, u, wide, plate, titleX, titleY, titleSize, align, buttons, card, modalButtons, pad, settingsHead, langToggle, audioAvailable: !!context.audio?.available }
+  return { L, S, u, wide, plate, titleX, titleY, titleSize, align, buttons, card, modalButtons, pad, settingsHead, board, langToggle, audioAvailable: !!context.audio?.available }
 }
 
 // Seletor PT | EN discreto no canto superior direito da área segura (alvo ≥ 44px).
@@ -273,6 +314,10 @@ function activate(context, id) {
       break
     case 'language':
       setLang(getLang() === 'pt' ? 'en' : 'pt')
+      break
+    case 'ranking':
+      mode = 'ranking'
+      modalSelected = 0
       break
     case 'replay':
       context.goTo?.('intro', { replay: true })
@@ -424,7 +469,7 @@ function drawLink(ctx, rect, label, u, focused) {
   ctx.globalAlpha = focused ? 0.95 : 0.7
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  fitFont(ctx, label, rect.w + 40, 16 * u, 12, { style: 'italic' })
+  fitFont(ctx, label, rect.w - 6, 16 * u, 11, { style: 'italic' })
   ctx.fillText(label, cx, cy)
   const tw = ctx.measureText(label).width
   ctx.restore()
@@ -481,7 +526,20 @@ function drawModal(ctx, M, w, h) {
   ctx.textAlign = 'center'
   ctx.textBaseline = 'alphabetic'
   const cx = card.x + card.w / 2
-  if (mode === 'confirm') {
+  if (mode === 'ranking') {
+    const B = M.board
+    fitFont(ctx, tr('score.board.title'), card.w - 32, B.titleSize, 14)
+    ctx.fillText(tr('score.board.title'), cx, card.y + B.titleBase)
+    if (B.best > 0) {
+      ctx.globalAlpha = 0.75
+      const best = tr('score.board.best', { n: formatScore(B.best) })
+      fitFont(ctx, best, card.w - 32, B.noteSize, 10, { style: 'italic' })
+      ctx.fillText(best, cx, card.y + B.titleBase + B.noteSize * 1.6)
+    }
+    ctx.restore()
+    drawLeaderboard(ctx, B.table, B.rows, { u, columns: B.columns, time: t })
+    ctx.save()
+  } else if (mode === 'confirm') {
     ctx.font = font(Math.min(23 * u, (card.w - pad * 2) / 11))
     fitFont(ctx, tr('menu.confirmTitle'), card.w - pad * 2, Math.min(23 * u, (card.w - pad * 2) / 11), 14)
     ctx.fillText(tr('menu.confirmTitle'), cx, card.y + pad + 26 * u)

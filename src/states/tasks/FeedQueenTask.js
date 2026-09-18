@@ -1,24 +1,33 @@
 // Tarefa: Alimentar a rainha (séquito real).
 //
-// Posicionamento em multidão + combo de precisão:
+// Posicionamento em multidão + combo curto de direções:
 //  - A rainha (fisogástrica) anda e vira devagar dentro da câmara real; o séquito
-//    a cerca, disputa a frente da cabeça e empurra a operária do jogador.
-//  - Para alimentar: estar dentro do cone à frente da cabeça (arco técnico fino)
-//    enquanto a boca está aberta (TimingWindow). Aí surge uma sequência de direções
-//    (ComboInput, relógio do jogo) - direcionais grandes do Controls (celular) ou
-//    setas (PC). Os direcionais só aparecem enquanto o combo está ativo.
+//    a cerca e disputa a frente da cabeça.
+//  - Zona de alimentação: cone largo à frente da cabeça (arco técnico + marca de
+//    encaixe). Ao entrar nele a operária ENCAIXA: magnetismo suave para a posição
+//    ideal, acompanha a rainha e as atendentes não a empurram. Sai-se do encaixe
+//    empurrando o direcional/dedo para fora por um instante.
+//  - Com a boca aberta (TimingWindow) e carga, começa o combo: 2 direções (3 nos
+//    turnos seguintes). Durante o combo a abelha fica PARADA, a rainha quase para e
+//    a boca espera. Entrada: setas, WASD ou direcionais grandes do Controls (toque).
+//    Tempo generoso por direção; o 1º erro (ou demora) só gasta a tentativa extra,
+//    o 2º falha o combo. A sequência aparece grande perto da abelha.
 //  - Carga de alimento limitada; reabastece-se nos potes de mel na borda da câmara.
-//  - Fome da rainha (Gauge) sobe sempre; em estado crítico ela para de pôr ovos
-//    e o brilho dourado esmaece.
+//  - Fome da rainha (Gauge) sobe sempre: mostrador grande preso à rainha (calma ->
+//    inquieta -> crítica, pulso quando crítica) + mostrador no topo. Em estado crítico
+//    ela para de pôr ovos, o brilho dourado esmaece e ela se agita.
+//  - Pontos (context.score): alimentação completa = award perfect (sem erro) /
+//    great (1 erro) + acertos de direção (small); bônus ao alimentar com fome
+//    crítica; especial usado; miss() em combo falho e quando a fome fica crítica.
 //  - Especial "Abrir caminho" (SpecialMeter: carga passiva ~20s + bônus por combo):
 //    uma onda parte da operária e dispersa o séquito para a borda da câmara; por ~6s
 //    as atendentes não empurram nem bloqueiam e depois voltam devagar.
-//  - Dificuldade: data.difficulty (0-1, difficultyFor) + inShiftRamp dentro do turno.
+//  - Dificuldade: data.difficulty (0-1, difficultyFor) reescalada para o nível
+//    interno (0 no primeiro turno) + inShiftRamp dentro do turno.
 
 import createMovement from '../../engine/MovementController.js'
 import createGauge from '../../engine/Gauge.js'
 import createTimingWindow from '../../engine/TimingWindow.js'
-import createCombo from '../../engine/ComboInput.js'
 import { create as createMeter } from '../../engine/SpecialMeter.js'
 import { config, difficultyFor, inShiftRamp } from '../../data/config.js'
 import { ease, lerp } from '../../engine/tween.js'
@@ -42,13 +51,16 @@ const P = styleGuide.palettes.naturalist
 const TAU = Math.PI * 2
 const SHIFT_DURATION = config.shiftDuration
 const MAX_CHARGE = 3
-const EXPECTED_FEEDS = Math.round(13 * config.durationScale)
+const EXPECTED_FEEDS = Math.round(21 * config.durationScale)
+const CRIT_COLOR = '#B5532E' // terracota: fome crítica (accentPink fica só no especial pronto)
+const MAX_MISTAKES = 1 // tentativas extras por combo antes de falhar
 const SPECIAL_CHARGE_TIME = 20
 const SPECIAL_DURATION = 6
 const WAVE_DUR = 0.75
 
 const DIRS = ['up', 'right', 'down', 'left']
 const DIR_ANGLE = { up: -Math.PI / 2, right: 0, down: Math.PI / 2, left: Math.PI }
+const WASD = { KeyW: 'up', KeyA: 'left', KeyS: 'down', KeyD: 'right' }
 
 // Corpo da rainha em "unidades de abelha" (mesmo sistema de bee.js: +x = cabeça).
 const QUEEN_ABDOMEN = [
@@ -100,24 +112,35 @@ function toWorld(q, lx, ly) {
   return { x: q.x + lx * c - ly * s, y: q.y + lx * s + ly * c }
 }
 
-// Nível efetivo: dificuldade do turno + rampa suave dentro do turno.
+// Nível efetivo 0-1: difficultyFor começa em config.difficulty.training (0,57) no
+// primeiro turno - aqui isso vira 0 (o turno de aprendizado é o mais suave) e sobe
+// com os turnos seguintes; mais uma rampa suave dentro do turno.
+function baseLevel(d) {
+  const tr = config.difficulty?.training ?? 0.57
+  return clamp((d - tr) / Math.max(0.05, 1 - tr), 0, 1)
+}
 function levelAt(t) {
-  const d = st.difficulty
-  return clamp(d + (0.07 + 0.1 * d) * inShiftRamp(t, SHIFT_DURATION), 0, 1)
+  const b = st.baseLevel
+  return clamp(b + (0.08 + 0.12 * b) * inShiftRamp(t, SHIFT_DURATION), 0, 1)
 }
+// Combo curto: 2 direções no começo, no máximo 3.
 function comboLengthAt(level) {
-  return Math.min(5, 2 + Math.floor(level * 3.6))
+  return level < 0.4 ? 2 : 3
 }
-// Parâmetros do séquito por nível (em ~0.1: 1 rival, raramente disputa, empurrão fraco).
+// Tempo (s) para cada direção do combo - generoso, sem precisão de quadro.
+function stepTimeAt(level) {
+  return lerp(2.6, 1.6, level)
+}
+// Parâmetros do séquito por nível (em 0: 1 rival, raramente disputa, empurrão fraco).
 function courtParams(level) {
   return {
     rivals: Math.round(0.6 + 2.2 * level),
     claimDur: [1 + 0.9 * level, 1.8 + 1.2 * level],
-    idleDur: [lerp(6, 3.2, level), lerp(9.5, 5.5, level)],
-    chaseSpeed: lerp(55, 100, level),
-    shove: lerp(8, 36, level),
-    shoveShare: lerp(0.42, 0.54, level),
-    reach: lerp(1.1, 1.45, level),
+    idleDur: [lerp(7, 3.6, level), lerp(11, 6, level)],
+    chaseSpeed: lerp(50, 95, level),
+    shove: lerp(6, 30, level),
+    shoveShare: lerp(0.4, 0.52, level),
+    reach: lerp(1.05, 1.4, level),
   }
 }
 
@@ -463,18 +486,40 @@ function queenApex() {
   return toWorld(st.queen, QUEEN_APEX_X * st.L.qs, 0)
 }
 
+// Cone largo; o encaixe fica a DOCK_FRAC do alcance, no eixo da cabeça.
+const DOCK_FRAC = 0.5
 function coneGeometry(level) {
   const S = st.L.S
   return {
-    half: lerp(0.66, 0.46, level),
+    half: lerp(0.9, 0.62, level),
     minD: 4 * S,
-    maxD: lerp(92, 76, level) * S,
+    maxD: lerp(118, 96, level) * S,
   }
 }
+function pointInCone(x, y, apex, slack = 1) {
+  const c = st.cone
+  const d = Math.hypot(x - apex.x, y - apex.y)
+  if (d < c.minD || d > c.maxD * slack) return false
+  return Math.abs(angleDiff(Math.atan2(y - apex.y, x - apex.x), st.queen.heading)) <= c.half * slack
+}
+function dockPoint() {
+  const q = st.queen
+  const apex = queenApex()
+  const d = st.cone.maxD * DOCK_FRAC
+  return { x: apex.x + Math.cos(q.heading) * d, y: apex.y + Math.sin(q.heading) * d }
+}
 
+// calm: 1 = movimento normal; ~0,08 enquanto é alimentada (quase para), menor com a
+// operária encaixada. agit: 0 calma, 0,5 inquieta, 1 crítica (balanço mais nervoso).
 function updateQueen(dt, level) {
   const q = st.queen
   const L = st.L
+  const rawDt = dt
+  const calmTarget = st.combo ? 0.08 : st.player.docked ? 0.45 : 1
+  q.calm = approach(q.calm ?? 1, calmTarget, calmTarget < (q.calm ?? 1) ? 8 : 1.5, rawDt)
+  const hs = st.hunger.state
+  q.agit = approach(q.agit ?? 0, hs === 'critical' ? 1 : hs === 'restless' ? 0.45 : 0, 2, rawDt)
+  dt *= q.calm
   q.modeT += dt
   const qrx = L.rx * 0.3
   const qry = L.ry * 0.2
@@ -523,9 +568,11 @@ function updateQueen(dt, level) {
   } else {
     q.walk = 0
   }
-  q.legPhase += dt * (0.4 + q.walk * 2.4)
-  // oscilação orgânica sobreposta (o cone "respira")
-  q.sway = (Math.sin(st.t * 0.71) * 0.07 + Math.sin(st.t * 0.23 + 1.3) * 0.06) * lerp(0.35, 1, level)
+  q.legPhase += rawDt * (0.4 + q.walk * 2.4 + q.agit * 2.2)
+  // oscilação orgânica sobreposta (o cone "respira"); com fome, um tremor nervoso
+  q.swayT = (q.swayT || 0) + dt
+  const agitSway = q.agit * Math.sin(st.t * 5.3) * 0.035 * Math.max(0.3, q.calm)
+  q.sway = (Math.sin(q.swayT * 0.71) * 0.07 + Math.sin(q.swayT * 0.23 + 1.3) * 0.06) * lerp(0.3, 0.9, level) * Math.max(0.25, q.calm) + agitSway
   q.heading = q.base + q.sway
 }
 
@@ -553,70 +600,92 @@ function makeSequence(len) {
   return seq
 }
 
-function windowRemaining() {
-  return st.window.timeUntilClose
-}
 function windowFraction() {
   const w = st.window
   return w.isOpen ? clamp(1 - w.openProgress, 0, 1) : 0
 }
 
-// Tempo mínimo de boca aberta para a sequência ser humanamente possível: reação
-// inicial + ~0,4 s por direção (toque no celular). Se o jogador chega ao cone tarde
-// demais, o combo não abre e a janela não é gasta (nem a carga) - espera a próxima.
-const COMBO_REACTION = 0.45
-const COMBO_PER_INPUT = 0.4
-function comboMinTime(level) {
-  return COMBO_REACTION + comboLengthAt(level) * COMBO_PER_INPUT
-}
-
+// Combo próprio (não o ComboInput): cada direção tem seu tempo, e o primeiro erro
+// ou demora só gasta a tentativa extra - a mesma direção continua pedida.
 function startCombo(level) {
   const seq = makeSequence(comboLengthAt(level))
+  const stepTime = stepTimeAt(level)
   st.combo = {
     seq,
     idx: 0,
+    mistakes: 0,
     fedAny: false,
-    outT: 0,
-    combo: createCombo({ sequence: seq, timeLimit: windowRemaining() + 0.05, clock: 'game' }),
+    stepTime,
+    stepT: stepTime + 0.35, // a primeira direção ganha um respiro para ler
     t: 0,
+    flash: 0,
+    errT: 0,
+    errDir: null,
   }
+  st.player.docked = true
 }
 
-function feedCombo(dir) {
+function comboMistake(c, dir) {
+  c.mistakes++
+  c.errT = 0.5
+  c.errDir = dir
+  st.stats.mistakes++
+  if (c.mistakes > MAX_MISTAKES) {
+    endCombo(false, dir ? 'wrong' : 'timeout')
+    return
+  }
+  c.stepT = c.stepTime
+}
+
+function feedCombo(dir, context) {
   const c = st.combo
   if (!c) return
   if (!c.fedAny) st.stats.attempts++
   c.fedAny = true
-  c.combo.feed(dir)
-  if (c.combo.failed) {
-    endCombo(false, 'wrong')
+  if (dir !== c.seq[c.idx]) {
+    comboMistake(c, dir)
     return
   }
   c.idx++
-  c.flash = 0.18
-  if (c.combo.isComplete) endCombo(true)
+  c.flash = 0.22
+  c.stepT = c.stepTime
+  const g = comboGlyphPos(c.idx - 1)
+  if (c.idx >= c.seq.length) {
+    endCombo(true, null, context)
+  } else {
+    context?.score?.award(config.scoring.base.small, { x: g.x, y: g.y - 18 * st.L.S })
+  }
 }
 
-function endCombo(success, reason) {
+function endCombo(success, reason, context) {
   const c = st.combo
   const L = st.L
   const apex = queenApex()
-  st.windowUsed = true
   st.combo = null
+  st.feedCool = success ? 1.1 : 0.7
+  const score = (context || st.ctx)?.score
   if (success) {
-    // perfeito = bem no eixo da cabeça
-    const centered = Math.abs(st.coneAngle) < st.cone.half * 0.35
+    const clean = c.mistakes === 0
+    const wasCritical = st.hunger.state === 'critical'
     st.stats.feeds++
-    if (centered) st.stats.perfect++
-    st.hunger.subtract(centered ? 27 : 21)
-    st.meter.add(centered ? 0.14 : 0.06)
+    if (clean) st.stats.perfect++
+    st.hunger.subtract(clean ? 21 : 17)
+    st.meter.add(clean ? 0.14 : 0.07)
     st.player.charge = Math.max(0, st.player.charge - 1)
     st.queen.fedGlow = 1
+    st.queen.chew = 1.1
+    const base = config.scoring.base
+    score?.award(clean ? base.perfect : base.great, { x: apex.x, y: apex.y - 26 * L.S, reason: clean ? 'score.reason.perfect' : 'score.reason.great' })
+    if (wasCritical) {
+      st.stats.rescues++
+      score?.award(base.normal, { x: apex.x, y: apex.y + 10 * L.S, reason: 'score.reason.bonus' })
+    }
     st.fx.push({ type: 'ring', x: apex.x, y: apex.y, t: 0, dur: 1.1, r0: 6 * L.S, r1: 60 * L.S, color: P.caterpillarGold })
-    if (centered) st.fx.push({ type: 'ring', x: apex.x, y: apex.y, t: -0.15, dur: 1.2, r0: 4 * L.S, r1: 90 * L.S, color: P.sunGold })
+    if (clean) st.fx.push({ type: 'ring', x: apex.x, y: apex.y, t: -0.15, dur: 1.2, r0: 4 * L.S, r1: 90 * L.S, color: P.sunGold })
   } else {
     if (c && c.fedAny) {
       st.stats.fails++
+      score?.miss()
       st.player.charge = Math.max(0, st.player.charge - 0.5)
       st.fx.push({ type: 'cross', x: st.player.x, y: st.player.y - 30 * L.S, t: 0, dur: 0.9 })
       for (let i = 0; i < 7; i++) {
@@ -642,6 +711,8 @@ function enter(context, data = {}) {
   st = {
     shiftIndex,
     difficulty,
+    baseLevel: baseLevel(difficulty),
+    free: !!data?.free,
     meter: createMeter({ chargeTime: SPECIAL_CHARGE_TIME, duration: SPECIAL_DURATION }),
     wave: null,
     showDirs: null,
@@ -651,28 +722,30 @@ function enter(context, data = {}) {
     sprites: new Map(),
     spriteDpr: 0,
     spriteS: 0,
-    queen: { x: 0, y: 0, heading: 0, mode: 'rest', modeT: 0, modeDur: 1.5, legPhase: 0, walk: 0, sway: 0, mouth: 0, fedGlow: 0, glow: 1, eggT: 4 },
-    player: { x: 0, y: 0, r: 12, facing: 0, charge: MAX_CHARGE, legPhase: 0, moving: 0, refilling: false },
+    queen: { x: 0, y: 0, heading: 0, mode: 'rest', modeT: 0, modeDur: 1.5, legPhase: 0, walk: 0, sway: 0, mouth: 0, fedGlow: 0, glow: 1, eggT: 4, calm: 1, agit: 0, chew: 0 },
+    player: { x: 0, y: 0, r: 12, facing: 0, charge: MAX_CHARGE, legPhase: 0, moving: 0, refilling: false, docked: false, dockGlow: 0, undockT: 0, redockT: 0 },
     attendants: [],
     obstacles: [],
     controller: null,
     hunger: createGauge({ rate: 1.3, max: 100, thresholds: { restless: 0.5, critical: 0.75 } }),
+    hungerState: 'calm',
+    hungerPulse: 0,
+    dial: null,
     window: null,
     windowTier: -1,
     windowSize: 2.9,
-    windowWasOpen: false,
-    windowUsed: false,
+    feedCool: 0,
     combo: null,
-    cone: { half: 0.44, minD: 4, maxD: 78 },
+    cone: { half: 0.8, minD: 4, maxD: 110 },
     coneAngle: 0,
     inCone: false,
-    stats: { feeds: 0, perfect: 0, attempts: 0, fails: 0, critTime: 0, eggs: 0, specials: 0, why: {}, satedTime: 0 },
+    stats: { feeds: 0, perfect: 0, attempts: 0, fails: 0, mistakes: 0, rescues: 0, critTime: 0, eggs: 0, specials: 0, why: {}, satedTime: 0 },
     fx: [],
     eggs: [],
     ending: null,
     finished: false,
   }
-  st.hunger.value = lerp(28, 38, difficulty)
+  st.hunger.value = lerp(40, 48, st.baseLevel)
   makeWindow(levelAt(0))
   syncControls(context)
   if (ensureLayout(context)) initWorld()
@@ -688,21 +761,23 @@ function syncControls(context) {
   ctl.configure({ showAction: false, showSpecial: true, showDirections: want, meter: st.meter, specialLabel: t('feedQueen.specialButton') })
 }
 
+// Boca: abre com frequência e por bastante tempo (o combo, uma vez iniciado, segura
+// a boca aberta - ver update). O ritmo fica mais curto nos turnos seguintes.
 function makeWindow(level) {
   const tier = Math.round(level * 10)
   st.windowTier = tier
   const lv = tier / 10
-  st.windowSize = 1.3 + comboLengthAt(lv) * lerp(0.75, 0.62, lv)
+  st.windowSize = lerp(3.4, 2.2, lv)
   st.window = createTimingWindow({
-    // Intervalos menores criam mais oportunidades sem encurtar o tempo do combo.
-    periodRange: [lerp(0.55, 0.35, lv), lerp(1.0, 0.75, lv)],
+    periodRange: [lerp(0.5, 0.8, lv), lerp(1.1, 1.8, lv)],
     windowSize: st.windowSize,
-    jitter: lerp(0.08, 0.4, lv),
+    jitter: lerp(0.08, 0.3, lv),
   })
 }
 
 function update(context, dt) {
   if (!st) return
+  st.ctx = context
   const hadLayout = !!st.L
   if (!ensureLayout(context)) return
   if (!hadLayout) initWorld()
@@ -729,25 +804,30 @@ function update(context, dt) {
   const circles = queenCircles()
   const apex = queenApex()
 
-  // --- janela de boca
-  st.window.update(dt)
+  // --- janela de boca (congelada durante o combo: a rainha espera a comida)
+  if (!st.combo) st.window.update(dt)
   const open = st.window.isOpen
-  if (st.windowWasOpen && !open) {
-    st.windowUsed = false
-    if (Math.round(level * 10) !== st.windowTier) makeWindow(level)
-  }
-  st.windowWasOpen = st.window.isOpen
-  q.mouth = approach(q.mouth, open ? 1 : 0, open ? 9 : 6, dt)
+  if (!open && Math.round(level * 10) !== st.windowTier) makeWindow(level)
+  q.chew = Math.max(0, (q.chew || 0) - dt)
+  st.feedCool = Math.max(0, st.feedCool - dt)
+  q.mouth = approach(q.mouth, open && q.chew <= 0 ? 1 : 0, open ? 9 : 6, dt)
   const untilOpen = open ? 9 : st.window.timeUntilOpen
   q.anticip = clamp(1 - untilOpen / 0.9, 0, 1)
 
   // --- fome, ovos, brilho
-  st.hunger.setRate(lerp(0.85, 1.6, level))
+  st.hunger.setRate(lerp(4.15, 4.6, level))
   st.hunger.update(dt)
   const hState = st.hunger.state
+  if (hState === 'critical' && st.hungerState !== 'critical') {
+    // ficou crítica: quebra o combo de pontos e chama atenção
+    context.score?.miss()
+    st.hungerPulse = 1
+  }
+  st.hungerState = hState
+  st.hungerPulse = Math.max(0, st.hungerPulse - dt * 1.2)
   if (hState === 'critical') st.stats.critTime += dt
-  // saciedade: 1 abaixo de 20%, cai linearmente até 0 em 60%
-  st.stats.satedTime += dt * clamp(1 - (st.hunger.value / st.hunger.max - 0.2) / 0.4, 0, 1)
+  // saciedade: 1 abaixo de 25%, cai linearmente até 0 em 60%
+  st.stats.satedTime += dt * clamp(1 - (st.hunger.value / st.hunger.max - 0.25) / 0.35, 0, 1)
   const glowTarget = hState === 'critical' ? 0.05 : hState === 'restless' ? 0.55 : 1
   q.glow = approach(q.glow, glowTarget, 1.4, dt)
   q.fedGlow = Math.max(0, q.fedGlow - dt * 0.8)
@@ -763,13 +843,29 @@ function update(context, dt) {
   st.eggs.forEach((e) => (e.t += dt))
   st.eggs = st.eggs.filter((e) => e.t < 5)
 
-  // --- entrada
+  // --- entrada do combo: setas/direcionais (Controls) OU WASD (bordas cruas; com os
+  // direcionais visíveis o Controls só usa WASD para mover, e a abelha está parada)
   const pl = st.player
-  if (st.combo && ctl?.directionPressed) feedCombo(ctl.directionPressed)
+  if (st.combo) {
+    let dir = ctl?.directionPressed || null
+    const inp = context.input
+    if (!dir && inp && typeof inp.wasKeyPressed === 'function') {
+      for (const k in WASD) {
+        if (inp.wasKeyPressed(k)) {
+          dir = WASD[k]
+          break
+        }
+      }
+    }
+    if (dir) feedCombo(dir, context)
+  }
 
   // --- especial: Abrir caminho
   st.meter.update(dt)
-  if (ctl?.specialPressed && st.meter.activate()) triggerScatter()
+  if (ctl?.specialPressed && st.meter.activate()) {
+    triggerScatter()
+    context.score?.award(config.scoring.base.normal, { x: pl.x, y: pl.y - 34 * L.S, reason: 'score.reason.special' })
+  }
   if (st.meter.justEnded) endScatter()
   if (st.wave) {
     st.wave.t += dt
@@ -778,7 +874,8 @@ function update(context, dt) {
 
   let mx = 0
   let my = 0
-  const mv = ctl?.move
+  let targetInCone = false
+  const mv = st.combo ? null : ctl?.move // durante o combo a abelha fica parada
   if (mv && mv.vx != null) {
     mx = mv.vx
     my = mv.vy
@@ -786,6 +883,7 @@ function update(context, dt) {
     const dx = mv.targetX - pl.x
     const dy = mv.targetY - pl.y
     const d = Math.hypot(dx, dy)
+    targetInCone = pointInCone(mv.targetX, mv.targetY, apex, 1.15)
     if (d > 4 * L.S) {
       const m = clamp(d / (30 * L.S), 0, 1)
       mx = (dx / d) * m
@@ -798,6 +896,27 @@ function update(context, dt) {
     my /= mag
   }
 
+  // --- encaixe: dentro do encaixe o comando só solta a abelha se apontar para fora
+  // (ou o dedo estiver fora do cone) por um instante.
+  pl.redockT = Math.max(0, pl.redockT - dt)
+  if (pl.docked && !st.combo) {
+    const dp = dockPoint()
+    const tx = dp.x - pl.x
+    const ty = dp.y - pl.y
+    const td = Math.hypot(tx, ty) || 1
+    const away = mag > 0.35 && !targetInCone && (mx * tx + my * ty) / (td * Math.max(mag, 1e-6)) < 0.35
+    pl.undockT = away ? pl.undockT + dt : 0
+    if (pl.undockT > 0.14) {
+      pl.docked = false
+      pl.undockT = 0
+      pl.redockT = 0.6
+    }
+  }
+  if (pl.docked) {
+    mx = 0
+    my = 0
+  }
+
   // --- movimento do jogador (MovementController, eixos separados = desliza em obstáculos)
   st.obstacles.length = 0
   for (const c of circles) st.obstacles.push({ x: c.x, y: c.y, radius: c.radius + pl.r })
@@ -805,15 +924,21 @@ function update(context, dt) {
     for (const it of cl.items) st.obstacles.push({ x: cl.x + it.dx, y: cl.y + it.dy, radius: it.rx + pl.r })
   }
   const ctrl = st.controller
+  const px0 = pl.x
+  const py0 = pl.y
   ctrl.setPosition(pl.x, pl.y)
   ctrl.setSpeedMultiplier(1 - 0.05 * pl.charge)
   ctrl.update(dt, { x: mx, y: 0 })
   ctrl.update(dt, { x: 0, y: my })
-  const nx = ctrl.position.x
-  const ny = ctrl.position.y
-  const moved = Math.hypot(nx - pl.x, ny - pl.y)
-  pl.x = nx
-  pl.y = ny
+  pl.x = ctrl.position.x
+  pl.y = ctrl.position.y
+  if (pl.docked) {
+    // magnetismo: desliza até a posição ideal e acompanha a rainha
+    const dp = dockPoint()
+    pl.x = approach(pl.x, dp.x, 7, dt)
+    pl.y = approach(pl.y, dp.y, 7, dt)
+  }
+  const moved = Math.hypot(pl.x - px0, pl.y - py0)
   pl.moving = approach(pl.moving, clamp(moved / (dt * 120 * L.S + 1e-6), 0, 1), 10, dt)
   pl.legPhase += dt * (0.5 + pl.moving * 7)
 
@@ -865,7 +990,12 @@ function update(context, dt) {
       }
       if (rival && a.claiming) {
         maxSpeed = court.chaseSpeed * L.S
-        if (pdApex < st.cone.maxD * court.reach) {
+        if (pl.docked) {
+          // operária encaixada: a rival fica rondando ao lado, sem empurrar
+          const ang = q.heading + a.claimSide * Math.min(1.25, st.cone.half + 0.35)
+          const d = st.cone.maxD * DOCK_FRAC
+          target = { x: apex.x + Math.cos(ang) * d, y: apex.y + Math.sin(ang) * d }
+        } else if (pdApex < st.cone.maxD * court.reach) {
           target = { x: pl.x, y: pl.y }
         } else {
           const ang = q.heading + a.claimSide * st.cone.half * 0.45
@@ -896,7 +1026,7 @@ function update(context, dt) {
     const speed = Math.hypot(a.vx, a.vy)
     a.legPhase += dt * (0.4 + speed / (12 * L.S))
     // empurrão ativo: rival em disputa desloca a operária para fora do cone
-    if (rival && a.claiming && !(a.ghost > 0)) {
+    if (rival && a.claiming && !(a.ghost > 0) && !pl.docked) {
       const ex = pl.x - a.x
       const ey = pl.y - a.y
       const ed = Math.hypot(ex, ey)
@@ -939,7 +1069,8 @@ function update(context, dt) {
         const ov = A.r + B.r - d
         if (ov <= 0) continue
         let shareA = 0.5
-        if (A === pl) shareA = B.rival && B.claiming ? court.shoveShare : lerp(0.25, 0.42, level)
+        // abelha encaixada não é deslocada pelas atendentes
+        if (A === pl) shareA = pl.docked ? 0 : B.rival && B.claiming ? court.shoveShare : lerp(0.25, 0.42, level)
         A.x -= (dx / d) * ov * shareA
         A.y -= (dy / d) * ov * shareA
         B.x += (dx / d) * ov * (1 - shareA)
@@ -963,13 +1094,20 @@ function update(context, dt) {
   }
   ctrl.setPosition(pl.x, pl.y)
 
-  // --- cone
+  // --- cone / encaixe
   const vx = pl.x - apex.x
   const vy = pl.y - apex.y
   const vd = Math.hypot(vx, vy)
   st.coneAngle = angleDiff(Math.atan2(vy, vx), q.heading)
   st.inCone = vd >= st.cone.minD && vd <= st.cone.maxD && Math.abs(st.coneAngle) <= st.cone.half
-  if (st.inCone || st.combo) {
+  if (!pl.docked && st.inCone && pl.redockT <= 0) {
+    pl.docked = true
+    pl.undockT = 0
+    st.fx.push({ type: 'ring', x: pl.x, y: pl.y, t: 0, dur: 0.5, r0: pl.r, r1: pl.r + 18 * L.S, color: P.caterpillarGold })
+  }
+  if (pl.docked && !st.combo && !pointInCone(pl.x, pl.y, apex, 1.35)) pl.docked = false
+  pl.dockGlow = approach(pl.dockGlow, pl.docked ? 1 : 0, 6, dt)
+  if (pl.docked || st.combo) {
     pl.facing += angleDiff(Math.atan2(-vy, -vx), pl.facing) * Math.min(1, dt * 8)
   } else if (mag > 0.1) {
     pl.facing += angleDiff(Math.atan2(my, mx), pl.facing) * Math.min(1, dt * 9)
@@ -989,23 +1127,14 @@ function update(context, dt) {
 
   // --- combo / alimentação
   if (!st.combo) {
-    if (open && st.inCone && !st.windowUsed && pl.charge >= 1 && windowRemaining() >= comboMinTime(level)) startCombo(level)
+    if (open && pl.docked && q.chew <= 0 && st.feedCool <= 0 && pl.charge >= 1) startCombo(level)
   } else {
     const c = st.combo
     c.t += dt
-    c.flash = Math.max(0, (c.flash || 0) - dt)
-    c.combo.update(dt)
-    if (!open || c.combo.failed) {
-      endCombo(false, 'timeout')
-    } else {
-      c.outT = st.inCone ? 0 : c.outT + dt
-      if (c.outT > lerp(0.9, 0.55, level)) {
-        const fed = c.fedAny
-        endCombo(false, 'pushed')
-        // empurrado para fora antes de começar não gasta a janela
-        if (!fed) st.windowUsed = false
-      }
-    }
+    c.flash = Math.max(0, c.flash - dt)
+    c.errT = Math.max(0, c.errT - dt)
+    c.stepT -= dt
+    if (c.stepT <= 0) comboMistake(c, null)
   }
 
   // --- efeitos
@@ -1021,7 +1150,7 @@ function update(context, dt) {
   st.fx = st.fx.filter((f) => f.t < f.dur)
 
   if (st.t >= SHIFT_DURATION) {
-    if (st.combo) endCombo(false, 'end')
+    if (st.combo) endCombo(false, 'end', context)
     st.ending = 0
   }
   syncControls(context)
@@ -1083,7 +1212,6 @@ function triggerScatter() {
     a.vy += uy * 60 * L.S
   }
   st.stats.specials++
-  if (st.combo && !st.combo.fedAny) st.combo.outT = 0
 }
 
 function endScatter() {
@@ -1157,7 +1285,9 @@ function render(context, ctx) {
 
   drawFx(ctx)
   drawWave(ctx)
-  if (st.combo) drawComboUI(ctx)
+  drawQueenDial(ctx)
+  if (st.combo) drawComboUI(ctx, context)
+  if (st.free) drawFreeSeal(ctx)
   drawHUD(ctx, context.layout)
 
   if (st.ending != null) {
@@ -1303,21 +1433,42 @@ function drawCone(ctx) {
   const a0 = q.heading - half
   const a1 = q.heading + half
   const R = maxD
+  const docked = st.player.dockGlow
   ctx.save()
-  // leve preenchimento quando posicionado
-  if (st.inCone) {
-    ctx.beginPath()
-    ctx.moveTo(apex.x, apex.y)
-    ctx.arc(apex.x, apex.y, R, a0, a1)
-    ctx.closePath()
-    ctx.fillStyle = withAlpha(P.leafSageHighlight, open ? 0.3 : 0.18)
+  // zona de alimentação sempre sinalizada; mais forte (dourada) com a abelha encaixada
+  ctx.beginPath()
+  ctx.moveTo(apex.x, apex.y)
+  ctx.arc(apex.x, apex.y, R, a0, a1)
+  ctx.closePath()
+  ctx.fillStyle = withAlpha(P.leafSageHighlight, 0.16 + 0.1 * q.anticip + (open ? 0.08 : 0))
+  ctx.fill()
+  if (docked > 0.02) {
+    ctx.fillStyle = withAlpha(P.sunHalo, (0.28 + (open ? 0.14 : 0)) * docked)
     ctx.fill()
   }
-  const col = open ? P.caterpillarGold : INK_LINE
-  const alpha = open ? 0.85 : 0.3 + 0.35 * q.anticip
+  // marca de encaixe (posição ideal): mira técnica no eixo da cabeça
+  const dp = dockPoint()
+  const mr = 15 * L.S
+  ctx.strokeStyle = docked > 0.5 ? P.caterpillarGold : INK_LINE
+  ctx.globalAlpha = 0.45 + 0.4 * docked
+  ctx.lineWidth = 1.2
+  ctx.setLineDash([3, 3])
+  ctx.beginPath()
+  ctx.arc(dp.x, dp.y, mr + 4 * L.S, 0, TAU)
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.beginPath()
+  for (let i = 0; i < 4; i++) {
+    const a = q.heading + (i * Math.PI) / 2
+    ctx.moveTo(dp.x + Math.cos(a) * (mr + 7 * L.S), dp.y + Math.sin(a) * (mr + 7 * L.S))
+    ctx.lineTo(dp.x + Math.cos(a) * (mr + 1 * L.S), dp.y + Math.sin(a) * (mr + 1 * L.S))
+  }
+  ctx.stroke()
+  const col = open || docked > 0.5 ? P.caterpillarGold : INK_LINE
+  const alpha = open ? 0.9 : 0.5 + 0.3 * Math.max(q.anticip, docked)
   ctx.strokeStyle = col
   ctx.globalAlpha = alpha
-  ctx.lineWidth = 1
+  ctx.lineWidth = 1.3
   // raios laterais
   ctx.beginPath()
   ctx.moveTo(apex.x + Math.cos(a0) * minD, apex.y + Math.sin(a0) * minD)
@@ -1326,7 +1477,7 @@ function drawCone(ctx) {
   ctx.lineTo(apex.x + Math.cos(a1) * R, apex.y + Math.sin(a1) * R)
   ctx.stroke()
   // arco externo com marcas de transferidor
-  ctx.lineWidth = open ? 1.6 : 1
+  ctx.lineWidth = open ? 2.2 : 1.6
   ctx.beginPath()
   ctx.arc(apex.x, apex.y, R, a0, a1)
   ctx.stroke()
@@ -1730,11 +1881,22 @@ function drawAttendant(ctx, a) {
 function drawPlayer(ctx) {
   const L = st.L
   const pl = st.player
+  // encaixada: brilho dourado sob a abelha
+  if (pl.dockGlow > 0.02) {
+    const gr = pl.r + 22 * L.S
+    const g = ctx.createRadialGradient(pl.x, pl.y, pl.r * 0.4, pl.x, pl.y, gr)
+    g.addColorStop(0, withAlpha(P.sunHalo, 0.75 * pl.dockGlow))
+    g.addColorStop(1, withAlpha(P.sunHalo, 0))
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(pl.x, pl.y, gr, 0, TAU)
+    ctx.fill()
+  }
   // anel de identificação (instrumento): círculo fino com marcas cardeais
   ctx.save()
-  ctx.strokeStyle = P.leafSageShadow
-  ctx.globalAlpha = 0.75
-  ctx.lineWidth = 1.1
+  ctx.strokeStyle = pl.dockGlow > 0.5 ? P.caterpillarGold : P.leafSageShadow
+  ctx.globalAlpha = 0.75 + 0.2 * pl.dockGlow
+  ctx.lineWidth = 1.1 + pl.dockGlow
   const rr = pl.r + 9 * L.S
   ctx.beginPath()
   ctx.arc(pl.x, pl.y, rr, 0, TAU)
@@ -1797,106 +1959,304 @@ function drawChevron(ctx, x, y, r, dir) {
   ctx.restore()
 }
 
-function drawComboUI(ctx) {
+// Sequência do combo: fileira horizontal de glifos grandes, do lado da operária oposto
+// à cabeça da rainha, mantida dentro do campo.
+function comboGeometry() {
   const L = st.L
   const pl = st.player
   const c = st.combo
+  const n = c ? c.seq.length : 2
+  const gr = Math.max(21, 19 * L.S)
+  const gap = gr * 2.55
+  const apex = queenApex()
+  let ux = pl.x - apex.x
+  let uy = pl.y - apex.y
+  const ud = Math.hypot(ux, uy) || 1
+  ux /= ud
+  uy /= ud
+  const w = gap * (n - 1) + gr * 2
+  // distância até a borda da fileira na direção (ux, uy)
+  const reach = pl.r + 26 * L.S + Math.abs(ux) * (w / 2) + Math.abs(uy) * gr
+  let cx = pl.x + ux * reach
+  let cy = pl.y + uy * reach
+  const pf = L.pf
+  const m = 8
+  cx = clamp(cx, pf.x + m + w / 2, pf.x + pf.w - m - w / 2)
+  cy = clamp(cy, pf.y + m + gr + 12 * L.S, pf.y + pf.h - m - gr - 26 * L.S)
+  return { n, gr, gap, cx, cy, w }
+}
+
+function comboGlyphPos(i) {
+  const g = comboGeometry()
+  return { x: g.cx - (g.gap * (g.n - 1)) / 2 + g.gap * i, y: g.cy, r: g.gr }
+}
+
+function drawComboUI(ctx, context) {
+  const L = st.L
+  const c = st.combo
+  const { n, gr, gap, cx, cy, w } = comboGeometry()
+  const shake = c.errT > 0 ? Math.sin(c.errT * 60) * 5 * c.errT * L.S : 0
   ctx.save()
   ctx.lineCap = 'round'
   ctx.lineJoin = 'round'
 
-  // sequência (só visual; entrada pelos direcionais/setas): arco de transferidor
-  // do lado da operária oposto à cabeça da rainha, mantido dentro do campo.
-  const n = c.seq.length
-  const gr = Math.max(14, 13 * L.S)
-  const R = Math.max(70 * L.S, gr * 5.2)
-  const step = Math.min(0.42, 1.9 / n, (gr * 2.5) / R)
-  const apex = queenApex()
-  const mid = Math.atan2(pl.y - apex.y, pl.x - apex.x)
-  const a0 = mid - (step * (n - 1)) / 2
-  // centro deslocado para caber no playfield
-  let ox = pl.x
-  let oy = pl.y
-  const pf = L.pf
-  let minX = Infinity
-  let maxX = -Infinity
-  let minY = Infinity
-  let maxY = -Infinity
-  for (let i = 0; i < n; i++) {
-    const a = a0 + step * i
-    minX = Math.min(minX, Math.cos(a) * R - gr)
-    maxX = Math.max(maxX, Math.cos(a) * R + gr)
-    minY = Math.min(minY, Math.sin(a) * R - gr)
-    maxY = Math.max(maxY, Math.sin(a) * R + gr)
-  }
-  const m = 6
-  if (ox + minX < pf.x + m) ox = pf.x + m - minX
-  if (ox + maxX > pf.x + pf.w - m) ox = pf.x + pf.w - m - maxX
-  if (oy + minY < pf.y + m) oy = pf.y + m - minY
-  if (oy + maxY > pf.y + pf.h - m) oy = pf.y + pf.h - m - maxY
-
-  ctx.globalAlpha = 0.5
+  // placa de papel atrás da fileira (legibilidade sobre o séquito)
+  const padX = 12 * L.S
+  const top = cy - gr - 12 * L.S
+  const hh = gr * 2 + 12 * L.S + 30 * L.S
+  ctx.fillStyle = withAlpha(P.paperCreamLight, 0.9)
   ctx.strokeStyle = INK_LINE
-  ctx.lineWidth = 0.8
+  ctx.lineWidth = 1
   ctx.beginPath()
-  ctx.arc(ox, oy, R, a0 - step * 0.6, a0 + step * (n - 1) + step * 0.6)
-  ctx.stroke()
-  // tempo restante da boca aberta
-  const f = windowFraction()
-  ctx.globalAlpha = 0.9
-  ctx.strokeStyle = P.caterpillarGold
-  ctx.lineWidth = 2.4
-  const span = step * (n - 1) + step * 1.2
-  ctx.beginPath()
-  ctx.arc(ox, oy, R + gr + 6 * L.S, mid - (span / 2) * f, mid + (span / 2) * f)
+  if (ctx.roundRect) ctx.roundRect(cx - w / 2 - padX + shake, top, w + padX * 2, hh, 10 * L.S)
+  else ctx.rect(cx - w / 2 - padX + shake, top, w + padX * 2, hh)
+  ctx.fill()
+  ctx.globalAlpha = 0.55
   ctx.stroke()
 
   for (let i = 0; i < n; i++) {
-    const a = a0 + step * i
-    const x = ox + Math.cos(a) * R
-    const y = oy + Math.sin(a) * R
+    const x = cx - (gap * (n - 1)) / 2 + gap * i + shake
+    const y = cy
     ctx.globalAlpha = 1
-    ctx.beginPath()
-    ctx.arc(x, y, gr, 0, TAU)
     if (i < c.idx) {
+      ctx.beginPath()
+      ctx.arc(x, y, gr, 0, TAU)
       ctx.fillStyle = P.caterpillarGold
       ctx.fill()
       ctx.strokeStyle = INK_LINE
-      ctx.lineWidth = 1
+      ctx.lineWidth = 1.2
       ctx.stroke()
-      ctx.lineWidth = 1.5
+      ctx.lineWidth = 2.6
       drawChevron(ctx, x, y, gr, c.seq[i])
     } else if (i === c.idx) {
-      const pulse = 1 + (c.flash > 0 ? c.flash * 1.2 : Math.sin(st.t * 10) * 0.05)
-      ctx.fillStyle = P.sunHalo
-      ctx.fill()
+      const pulse = 1 + (c.flash > 0 ? c.flash * 0.8 : Math.sin(st.t * 8) * 0.06)
+      const R = gr * 1.12 * pulse
       ctx.beginPath()
-      ctx.arc(x, y, gr * pulse + 3, 0, TAU)
-      ctx.strokeStyle = P.caterpillarGold // próximo gesto (accentPink fica só no especial pronto)
-      ctx.lineWidth = 2.6
+      ctx.arc(x, y, R, 0, TAU)
+      ctx.fillStyle = c.errT > 0 ? withAlpha(CRIT_COLOR, 0.35) : P.sunHalo
+      ctx.fill()
+      ctx.strokeStyle = c.errT > 0 ? CRIT_COLOR : P.caterpillarGold
+      ctx.lineWidth = 3
       ctx.stroke()
+      // tempo desta direção: arco que se consome
+      const f = clamp(c.stepT / c.stepTime, 0, 1)
       ctx.strokeStyle = INK_LINE
-      ctx.lineWidth = 2
-      drawChevron(ctx, x, y, gr * 1.1, c.seq[i])
+      ctx.globalAlpha = 0.8
+      ctx.lineWidth = 2.4
+      ctx.beginPath()
+      ctx.arc(x, y, R + 6 * L.S, -Math.PI / 2, -Math.PI / 2 + TAU * f)
+      ctx.stroke()
+      ctx.globalAlpha = 1
+      ctx.lineWidth = 3.6
+      drawChevron(ctx, x, y, gr * 1.35, c.seq[i])
     } else {
-      ctx.fillStyle = withAlpha(P.paperCreamLight, 0.85)
+      ctx.beginPath()
+      ctx.arc(x, y, gr * 0.9, 0, TAU)
+      ctx.fillStyle = withAlpha(P.paperCreamLight, 0.95)
       ctx.fill()
       ctx.strokeStyle = INK_LINE
-      ctx.globalAlpha = 0.6
-      ctx.lineWidth = 0.9
+      ctx.globalAlpha = 0.55
+      ctx.lineWidth = 1.1
       ctx.stroke()
-      ctx.lineWidth = 1.3
-      drawChevron(ctx, x, y, gr, c.seq[i])
+      ctx.lineWidth = 2.2
+      drawChevron(ctx, x, y, gr * 0.95, c.seq[i])
     }
-    // marca de escala sob cada glifo
-    ctx.globalAlpha = 0.5
-    ctx.strokeStyle = INK_LINE
-    ctx.lineWidth = 0.8
-    ctx.beginPath()
-    ctx.moveTo(ox + Math.cos(a) * (R - gr - 2), oy + Math.sin(a) * (R - gr - 2))
-    ctx.lineTo(ox + Math.cos(a) * (R - gr - 7 * L.S), oy + Math.sin(a) * (R - gr - 7 * L.S))
-    ctx.stroke()
   }
+
+  // tentativa extra (gota cheia = ainda disponível) + dica de teclas no PC
+  const fy = cy + gr + 16 * L.S
+  const fontS = Math.round(clamp(11 * L.S, 11, 15))
+  ctx.font = `italic ${fontS}px Georgia, serif`
+  ctx.textBaseline = 'middle'
+  ctx.textAlign = 'center'
+  const spare = c.mistakes < MAX_MISTAKES
+  const label = spare ? t('feedQueen.spare') : t('feedQueen.lastTry')
+  const touch = !!context?.controls?.isTouch
+  const txt = touch ? label : `${label}  ·  ${t('feedQueen.keysHint')}`
+  const tw = ctx.measureText(txt).width
+  const dx = cx - tw / 2 - 4 * L.S + shake
+  ctx.globalAlpha = 1
+  ctx.beginPath()
+  ctx.arc(dx, fy, 4 * L.S, 0, TAU)
+  ctx.fillStyle = spare ? P.sunGold : withAlpha(CRIT_COLOR, 0.8)
+  ctx.fill()
+  ctx.strokeStyle = INK_LINE
+  ctx.lineWidth = 0.9
+  ctx.stroke()
+  ctx.globalAlpha = 0.9
+  ctx.fillStyle = spare ? INK_LINE : CRIT_COLOR
+  ctx.fillText(txt, cx + 6 * L.S + shake, fy)
+  ctx.restore()
+}
+
+// Mostrador de fome preso à rainha (além do da barra do topo): arco grande com
+// setores calma/inquieta/crítica, preenchido na cor do estado; pulsa e brilha quando
+// crítico. Fica depois da ponta do abdômen, suavizado para não tremer com a rainha.
+const HUNGER_COLORS = { calm: P.leafSageShadow, restless: P.caterpillarGold, critical: CRIT_COLOR }
+function hungerColor(state) {
+  return HUNGER_COLORS[state] || INK_LINE
+}
+
+function drawQueenDial(ctx) {
+  const L = st.L
+  const q = st.queen
+  const h = st.hunger
+  const v = clamp(h.value / h.max, 0, 1)
+  const state = h.state
+  const crit = state === 'critical'
+  const R = Math.max(24, 23 * L.S)
+  const off = 53.5 * L.qs + R + 10 * L.S
+  let tx = q.x - Math.cos(q.heading) * off
+  let ty = q.y - Math.sin(q.heading) * off
+  const pf = L.pf
+  const m = R + 12 * L.S
+  tx = clamp(tx, pf.x + m, pf.x + pf.w - m)
+  ty = clamp(ty, pf.y + m, pf.y + pf.h - m - 12 * L.S)
+  if (!st.dial || st.dialS !== L.S) {
+    st.dial = { x: tx, y: ty }
+    st.dialS = L.S
+  }
+  // suavização pelo relógio da tarefa (independe da taxa de quadros)
+  const dtr = clamp(st.t - (st.dial.t ?? st.t), 0, 0.1)
+  st.dial.t = st.t
+  st.dial.x = approach(st.dial.x, tx, 3, dtr)
+  st.dial.y = approach(st.dial.y, ty, 3, dtr)
+  const x = st.dial.x
+  const y = st.dial.y
+  const pulse = crit ? 1 + Math.sin(st.t * 7) * 0.06 : 1
+  const col = hungerColor(state)
+  const A0 = Math.PI * 0.75
+  const SPAN = Math.PI * 1.5
+  const at = (u) => A0 + SPAN * u
+
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(pulse, pulse)
+  ctx.lineCap = 'round'
+  // brilho crítico
+  if (crit) {
+    const gl = 0.35 + 0.25 * Math.sin(st.t * 7)
+    const g = ctx.createRadialGradient(0, 0, R * 0.6, 0, 0, R * 1.9)
+    g.addColorStop(0, withAlpha(CRIT_COLOR, gl))
+    g.addColorStop(1, withAlpha(CRIT_COLOR, 0))
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(0, 0, R * 1.9, 0, TAU)
+    ctx.fill()
+  }
+  // disco de papel
+  ctx.fillStyle = withAlpha(P.paperCreamLight, 0.92)
+  ctx.beginPath()
+  ctx.arc(0, 0, R + 7 * L.S, 0, TAU)
+  ctx.fill()
+  ctx.strokeStyle = INK_LINE
+  ctx.globalAlpha = 0.6
+  ctx.lineWidth = 1
+  ctx.stroke()
+  // trilha em setores
+  const lw = 7 * L.S
+  ctx.lineWidth = lw
+  ctx.globalAlpha = 0.28
+  ctx.strokeStyle = P.leafSage
+  ctx.beginPath()
+  ctx.arc(0, 0, R, at(0), at(0.5))
+  ctx.stroke()
+  ctx.strokeStyle = P.caterpillarGold
+  ctx.beginPath()
+  ctx.arc(0, 0, R, at(0.5), at(0.75))
+  ctx.stroke()
+  ctx.strokeStyle = CRIT_COLOR
+  ctx.beginPath()
+  ctx.arc(0, 0, R, at(0.75), at(1))
+  ctx.stroke()
+  // preenchimento até o valor
+  ctx.globalAlpha = 1
+  ctx.strokeStyle = col
+  ctx.beginPath()
+  ctx.arc(0, 0, R, at(0), at(Math.max(0.01, v)))
+  ctx.stroke()
+  // marcas dos limiares
+  ctx.strokeStyle = INK_LINE
+  ctx.lineWidth = 1.2
+  ctx.globalAlpha = 0.8
+  ctx.beginPath()
+  for (const u of [0.5, 0.75]) {
+    const a = at(u)
+    ctx.moveTo(Math.cos(a) * (R - lw * 0.7), Math.sin(a) * (R - lw * 0.7))
+    ctx.lineTo(Math.cos(a) * (R + lw * 0.7), Math.sin(a) * (R + lw * 0.7))
+  }
+  ctx.stroke()
+  // ponteiro
+  const na = at(v) + (crit ? Math.sin(st.t * 23) * 0.03 : 0)
+  ctx.lineWidth = 2
+  ctx.globalAlpha = 1
+  ctx.beginPath()
+  ctx.moveTo(0, 0)
+  ctx.lineTo(Math.cos(na) * (R - 2), Math.sin(na) * (R - 2))
+  ctx.stroke()
+  ctx.fillStyle = INK_LINE
+  ctx.beginPath()
+  ctx.arc(0, 0, 2.6 * L.S, 0, TAU)
+  ctx.fill()
+  // rótulos: "FOME" no mostrador, estado (calma/inquieta/crítica) embaixo
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = `bold ${Math.round(clamp(9.5 * L.S, 10, 13))}px Georgia, serif`
+  ctx.fillStyle = INK_LINE
+  ctx.globalAlpha = 0.85
+  ctx.fillText(t('feedQueen.dialLabel'), 0, R * 0.55)
+  const sf = Math.round(clamp(12 * L.S, 12, 16))
+  ctx.font = `italic bold ${sf}px Georgia, serif`
+  const label = t('feedQueen.state.' + state)
+  const lwid = ctx.measureText(label).width + 10
+  const ly = R + 7 * L.S + sf * 0.75
+  ctx.globalAlpha = 0.9
+  ctx.fillStyle = withAlpha(P.paperCreamLight, 0.9)
+  ctx.fillRect(-lwid / 2, ly - sf * 0.65, lwid, sf * 1.3)
+  ctx.globalAlpha = 1
+  ctx.fillStyle = col
+  ctx.fillText(label, 0, ly)
+  ctx.restore()
+
+  // transição para crítico: anel que se expande
+  if (st.hungerPulse > 0) {
+    ctx.save()
+    ctx.strokeStyle = CRIT_COLOR
+    ctx.globalAlpha = st.hungerPulse
+    ctx.lineWidth = 2.5
+    ctx.beginPath()
+    ctx.arc(x, y, R + (1 - st.hungerPulse) * 40 * L.S, 0, TAU)
+    ctx.stroke()
+    ctx.restore()
+  }
+}
+
+// Selo discreto de turno livre (canto do campo).
+function drawFreeSeal(ctx) {
+  const L = st.L
+  const pf = L.pf
+  const txt = t('feedQueen.free')
+  ctx.save()
+  const fs = Math.round(clamp(11 * L.S, 11, 14))
+  ctx.font = `italic ${fs}px Georgia, serif`
+  const w = ctx.measureText(txt).width + 16
+  const x = pf.x + 10
+  const y = pf.y + 8
+  const h = fs + 10
+  ctx.globalAlpha = 0.8
+  ctx.fillStyle = withAlpha(P.paperCreamLight, 0.85)
+  ctx.strokeStyle = P.leafSageShadow
+  ctx.lineWidth = 1
+  ctx.setLineDash([3, 2])
+  ctx.beginPath()
+  ctx.rect(x, y, w, h)
+  ctx.fill()
+  ctx.stroke()
+  ctx.setLineDash([])
+  ctx.fillStyle = P.leafSageShadow
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(txt, x + 8, y + h / 2 + 1)
   ctx.restore()
 }
 
@@ -1979,6 +2339,14 @@ function drawHUD(ctx, layout) {
   ctx.moveTo(hx - R - 8 * S, hy)
   ctx.lineTo(hx + R + 8 * S, hy)
   ctx.stroke()
+  // preenchimento na cor do estado (calma -> inquieta -> crítica)
+  ctx.lineWidth = 4.5 * S
+  ctx.globalAlpha = crit ? 0.75 + 0.25 * Math.sin(st.t * 7) : 0.95
+  ctx.strokeStyle = hungerColor(h.state)
+  ctx.beginPath()
+  ctx.arc(hx, hy, R, arcAt(0), arcAt(Math.max(0.01, v)))
+  ctx.stroke()
+  ctx.strokeStyle = INK_LINE
   // ponteiro
   const wob = crit ? Math.sin(st.t * 23) * 0.025 : 0
   const na = arcAt(v) + wob
@@ -2002,6 +2370,15 @@ function drawHUD(ctx, layout) {
   const midY = hb.y + hb.h / 2
   const hungerLabel = t('feedQueen.hunger')
   ctx.fillText(hungerLabel, tx, midY - 4)
+  const stateLabel = t('feedQueen.state.' + h.state)
+  const slx = tx + ctx.measureText(hungerLabel + ' ').width
+  ctx.save()
+  ctx.font = `italic bold ${fontS}px Georgia, serif`
+  ctx.globalAlpha = 1
+  ctx.fillStyle = hungerColor(h.state)
+  ctx.fillText(`· ${stateLabel}`, slx, midY - 4)
+  const stateW = ctx.measureText(`· ${stateLabel}`).width
+  ctx.restore()
 
   // tally de alimentações (marcas de caderno de campo) + ovos
   const ty = hb.y + hb.h - 6
@@ -2018,7 +2395,7 @@ function drawHUD(ctx, layout) {
     }
   }
   // ovos postos (à direita do título)
-  const ex = tx + ctx.measureText(hungerLabel).width + 16 * S
+  const ex = slx + stateW + 16 * S
   const ey = midY - 4
   ctx.globalAlpha = st.queen.glow < 0.2 ? 0.4 : 0.85
   ctx.beginPath()
