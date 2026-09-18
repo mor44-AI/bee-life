@@ -22,10 +22,12 @@ import cleaning from './strings/cleaning.js'
 import feedLarvae from './strings/feedLarvae.js'
 import feedQueen from './strings/feedQueen.js'
 import guard from './strings/guard.js'
+import score from './strings/score.js'
+import facts from './strings/facts.js'
 
 export const LANGS = ['pt', 'en']
 export const LANG_STORAGE_KEY = 'bee-life.lang.v1'
-export const MODULES = { screens, hud, species, cleaning, feedLarvae, feedQueen, guard }
+export const MODULES = { screens, hud, species, cleaning, feedLarvae, feedQueen, guard, score, facts }
 
 const dictionaries = { pt: {}, en: {} }
 for (const mod of Object.values(MODULES)) {

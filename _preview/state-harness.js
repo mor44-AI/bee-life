@@ -3,6 +3,8 @@
 // Uso: /_preview/state.html?state=cleaning   (tarefas: cleaning|feedLarvae|feedQueen|guard)
 //      /_preview/state.html?state=menu       (UI: intro|menu|hub|birth|promotion|end)
 //      /_preview/state.html?state=controls   (demo de layout + Controls + SpecialMeter)
+//      /_preview/state.html?state=scoredemo  (demo da animação de pontos/combo do ScoreSystem)
+//      &free=1          -> tarefa isolada entra como turno livre (data.free = true)
 //      &rank=feedQueen  -> força o rank inicial (útil para abrir o hub numa etapa)
 //      &shift=2         -> shiftIndex inicial de uma tarefa isolada
 //      &dirs=0          -> esconde os direcionais na demo 'controls'
@@ -31,12 +33,36 @@
 //   context.newGame()           -> inicia vida nova (vai para 'birth')
 //   context.continueGame()      -> carrega o save (vai para 'hub')
 //   context.completeBirth()     -> fim da animação de nascimento (vai para 'hub', rank 'cleaning')
-//   context.startShift()        -> hub inicia turno da tarefa do rank atual
+//   context.startShift(taskId?) -> sem argumento: turno da tarefa do rank atual. Com o id de
+//                                  uma fase de unlockedTasks() anterior ao rank atual: TURNO
+//                                  LIVRE (rejogar fase passada; data.free = true).
+//   context.unlockedTasks()     -> ids das fases já desbloqueadas, ordem fixa
+//                                  ['cleaning','feedLarvae','feedQueen','guard'] até o rank atual.
+//   context.currentTask()       -> fase do rank atual (null na larva).
+//   context.score      ScoreSystem (src/systems/ScoreSystem.js) - pontuação arcade da vida.
+//                      O loop chama score.update(dt) depois de machine.update e
+//                      score.render(ctx, layout) DEPOIS de machine.render (popups por cima da
+//                      tarefa). beginShift/endShift são chamados pela sessão, não pela tarefa.
+//                      A TAREFA chama:
+//                        context.score?.award(base, { x, y, reason })  a cada acerto
+//                          -> pontos = round(base × multiplicador do combo); popup "+N" em (x, y)
+//                             (coordenadas lógicas do canvas); reason = chave i18n opcional
+//                             ('score.reason.perfect' | great | good | fast | chain | special | bonus).
+//                          base sugerido: config.scoring.base { small 10, normal 25, great 50,
+//                          perfect 80 }; alvo ~config.scoring.targetShiftActionPoints (1.500)
+//                          de pontos de ação num turno médio.
+//                        context.score?.miss()  em erro/dano -> zera o combo.
+//                      Leitura: score.combo, score.multiplier (1 | 1,5 | 2 | 3), score.shiftPoints.
+//                      Combo expira após config.scoring.comboTimeout (2,5 s) sem award.
 //   context.finishShift({ score, summary })
 //        -> tarefa encerra o turno. score 0-100 (50 = neutro), summary = frase curta em PT.
 //           Registra pontuação, aplica ColonyState, avança config.days.daysPerShift dias
 //           (time.advanceDays, com colony.tickDecay(1) a cada noite) e decide o próximo
 //           estado: 'promotion' (data: { from, to }), 'end' (dominou a defesa), ou 'hub'.
+//           Também encerra a pontuação (score.endShift) e anexa data.points
+//           { actionPoints, phaseBonus, points, bestCombo, free } ao resultado.
+//           Turno livre: não gasta dias, não conta para promoção nem placar, efeito na
+//           colônia pela metade (ver cabeçalho de src/systems/GameSession.js).
 //   context.goTo(name, data)    -> atalho para machine.change (com controls.reset()).
 //
 // ORDEM DO LOOP (por frame):
@@ -45,9 +71,10 @@
 //
 // NOMES DE ESTADO: 'intro','menu','birth','hub','promotion','end',
 //                  'cleaning','feedLarvae','feedQueen','guard' (tarefa = id do rank)
-//                  + 'controls' (só harness: demonstração)
-// enter(context, data) de tarefa recebe data = { shiftIndex, difficulty }
+//                  + 'controls', 'scoredemo' (só harness: demonstração)
+// enter(context, data) de tarefa recebe data = { shiftIndex, difficulty, free }
 //   shiftIndex: 0 = primeiro turno nessa tarefa.
+//   free: true em turno livre (a tarefa pode mostrar um selo "Turno livre"; jogabilidade igual).
 //   difficulty: 0-1 = difficultyFor(taskId, shiftIndex, pontuaçõesDessaTarefa) de
 //               src/data/config.js (0.57 no primeiro turno; ajuda invisível se
 //               os 2 últimos turnos foram < 40). É a FONTE DA VERDADE da escalada entre
@@ -65,6 +92,8 @@ import { config, difficultyFor } from '../src/data/config.js'
 import { createControls } from '../src/ui/Controls.js'
 import { getLayout, installViewportGuards } from '../src/ui/layout.js'
 import { drawBeeBody, createFlightPose, createIdlePose } from '../src/art/bee.js'
+import ScoreSystem from '../src/systems/ScoreSystem.js'
+import { TASK_ORDER } from '../src/systems/GameSession.js'
 
 const MODULES = {
   intro: '../src/states/IntroState.js',
@@ -89,7 +118,7 @@ if (debugEl) {
     top: 'calc(env(safe-area-inset-top, 0px) + 2px)', bottom: 'auto', left: 'auto', right: '4px',
     fontSize: '10px', opacity: '0.75', maxWidth: '70vw',
   })
-  if (target === 'controls') debugEl.style.display = 'none' // a demo tem HUD próprio
+  if (target === 'controls' || target === 'scoredemo') debugEl.style.display = 'none' // a demo tem HUD próprio
 }
 
 async function loadState(name) {
@@ -132,9 +161,13 @@ function resultState(taskId, nextData) {
       ctx.fillText(`Turno encerrado - pontuação ${Math.round(result?.score ?? 0)}`, c.width / 2, c.height / 2 - 20)
       ctx.font = '16px Georgia, serif'
       ctx.fillText(result?.summary ?? '', c.width / 2, c.height / 2 + 16)
+      const pts = result?.points
+      if (pts) {
+        ctx.fillText(`pontos ${pts.actionPoints} + bônus da fase ${pts.phaseBonus} = ${pts.points} · melhor combo ${pts.bestCombo}${pts.free ? ' · livre' : ''}`, c.width / 2, c.height / 2 + 36)
+      }
       ctx.font = '14px Georgia, serif'
-      ctx.fillText('toque, clique ou Enter: próximo turno', c.width / 2, c.height / 2 + 56)
-      ctx.fillText(`turno ${next.shiftIndex + 1} · dificuldade ${next.difficulty.toFixed(2)}`, c.width / 2, c.height / 2 + 80)
+      ctx.fillText('toque, clique ou Enter: próximo turno', c.width / 2, c.height / 2 + 64)
+      ctx.fillText(`turno ${next.shiftIndex + 1} · dificuldade ${next.difficulty.toFixed(2)}`, c.width / 2, c.height / 2 + 88)
     },
   }
 }
@@ -278,6 +311,52 @@ function controlsDemoState() {
   }
 }
 
+// Demo só do harness: chama award/miss periodicamente para visualizar popups e combo.
+function scoreDemoState() {
+  let t = 0
+  let next = 0.4
+  let n = 0
+  const reasons = [null, null, 'score.reason.good', null, 'score.reason.perfect', 'score.reason.fast']
+  return {
+    enter(c) {
+      t = 0; next = 0.4; n = 0
+      c.score.beginShift('cleaning')
+      c.controls.configure({ showDirections: false })
+    },
+    update(c, dt) {
+      t += dt
+      const pf = c.layout.playfield
+      // Toque/clique também pontua ali (para testar coordenadas).
+      if (c.controls.pointerTap) c.score.award(25, { x: c.controls.pointerTap.x, y: c.controls.pointerTap.y })
+      if (c.controls.actionPressed) c.score.award(50, { reason: 'score.reason.great' })
+      if (t < next) return
+      n++
+      // Ciclo: 13 acertos (sobe até ×3), um erro, 4 acertos, pausa longa (expira).
+      const phase = n % 20
+      if (phase === 14) { c.score.miss(); next = t + 1.1; return }
+      if (phase === 19) { next = t + 3.2; return }
+      const x = pf.x + pf.w * (0.2 + 0.6 * ((n * 0.37) % 1))
+      const y = pf.y + pf.h * (0.35 + 0.35 * ((n * 0.61) % 1))
+      c.score.award(n % 7 === 0 ? 80 : 25, { x, y, reason: reasons[n % reasons.length] ?? undefined })
+      next = t + 0.35 + (n % 3) * 0.15
+    },
+    render(c, ctx) {
+      const L = c.layout
+      ctx.fillStyle = '#E3DAC0'
+      ctx.fillRect(0, 0, c.width, c.height)
+      ctx.fillStyle = '#EFE8D6'
+      ctx.fillRect(L.playfield.x, L.playfield.y, L.playfield.w, L.playfield.h)
+      ctx.fillStyle = '#2B2418'
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'middle'
+      ctx.font = `600 ${Math.round(12 * L.uiScale)}px Georgia, serif`
+      const s = c.score
+      ctx.fillText(`pontos ${s.shiftPoints} · combo ${s.combo} · ×${s.multiplier} · melhor ${s.bestCombo}`, L.hudBar.x + 10, L.hudBar.y + L.hudBar.h / 2)
+      c.controls.render(ctx, L)
+    },
+  }
+}
+
 async function main() {
   const renderer = new Renderer('#game-canvas')
   installViewportGuards(renderer.canvas)
@@ -292,6 +371,7 @@ async function main() {
     colony: new ColonyState(),
     time: new TimeSystem(),
     tasks: new TaskSystem(),
+    score: new ScoreSystem(),
     get width() { return renderer.width },
     get height() { return renderer.height },
   }
@@ -337,27 +417,43 @@ async function main() {
     context.tasks.currentRank = 'cleaning'
     context.goTo('hub')
   }
-  context.startShift = () => {
+  context.unlockedTasks = () => {
+    const idx = RANK_ORDER.indexOf(context.tasks.currentRank)
+    return TASK_ORDER.filter((id) => RANK_ORDER.indexOf(id) <= idx)
+  }
+  context.currentTask = () => (TASK_ORDER.includes(context.tasks.currentRank) ? context.tasks.currentRank : null)
+  let freeShift = false
+  context.startShift = (taskId) => {
     const rank = context.tasks.currentRank
-    context.goTo(rank, taskData(rank))
+    freeShift = taskId != null && taskId !== rank && context.unlockedTasks().includes(taskId)
+    const id = freeShift ? taskId : rank
+    context.score.beginShift(id, { free: freeShift })
+    context.goTo(id, { ...taskData(id), free: freeShift })
   }
 
   const isolatedTask = TASK_IDS.includes(target)
-  const isDemo = target === 'controls'
+  const isDemo = target === 'controls' || target === 'scoredemo'
+  const freeParam = params.get('free') === '1'
   const startShiftParam = parseInt(params.get('shift'), 10)
   if (isolatedTask && Number.isFinite(startShiftParam) && startShiftParam > 0) {
     shiftCounts[target] = startShiftParam
   }
 
   context.finishShift = ({ score = 50, summary = '' } = {}) => {
-    const rank = isolatedTask ? target : context.tasks.currentRank
+    const rank = isolatedTask ? target : context.score.taskId ?? context.tasks.currentRank
     const shiftIndex = shiftCounts[rank] ?? 0
     shiftCounts[rank] = shiftIndex + 1
     ;(scoresByTask[rank] ??= []).push(score)
-    console.log(`[harness] finishShift(${rank})`, { score, summary })
+    const points = context.score.endShift(rank, context.colony)
+    console.log(`[harness] finishShift(${rank})`, { score, summary, points })
 
     if (isolatedTask) {
-      context.goTo('result', { score, summary, shiftIndex })
+      context.goTo('result', { score, summary, shiftIndex, points })
+      return
+    }
+    if (freeShift) {
+      freeShift = false
+      context.goTo('hub')
       return
     }
     context.tasks.recordShiftScore(score)
@@ -383,14 +479,24 @@ async function main() {
     } else missing.push(name)
   }
   if (isolatedTask) machine.register('result', resultState(target, taskData))
-  if (isDemo) machine.register('controls', controlsDemoState())
+  if (target === 'controls') machine.register('controls', controlsDemoState())
+  if (target === 'scoredemo') machine.register('scoredemo', scoreDemoState())
 
   if (missing.includes(target)) {
     debugEl.textContent = `estado "${target}" ainda não implementado (stub)`
     return
   }
   // A primeira entrada numa tarefa isolada também recebe { shiftIndex, difficulty }.
-  if (isolatedTask) machine.change(target, taskData(target))
+  if (isolatedTask) {
+    // Cada entrada na tarefa isolada (primeira e "próximo turno") começa um turno de pontuação.
+    const baseGoTo = context.goTo
+    context.goTo = (name, data) => {
+      if (name === target) context.score.beginShift(target, { free: freeParam })
+      baseGoTo(name, data)
+    }
+    context.score.beginShift(target, { free: freeParam })
+    machine.change(target, { ...taskData(target), free: freeParam })
+  }
 
   const loop = createLoop({
     update(dt) {
@@ -398,15 +504,21 @@ async function main() {
       refreshLayout()
       controls.update(dt, context.layout)
       machine.update(dt)
+      context.score.update(dt)
       input.endFrame()
     },
     render() {
       const ctx = renderer.getContext()
       renderer.clear('#1a1410')
       machine.render(ctx)
+      // Popups/combo por cima da tarefa (as tarefas isoladas já mostram quando chamarem award).
+      if (TASK_ORDER.includes(machine.currentName) || machine.currentName === 'scoredemo') {
+        context.score.render(ctx, context.layout)
+      }
       const c = context.colony
       debugEl.textContent =
         `estado=${machine.currentName} rank=${context.tasks.currentRank} dia=${context.time.currentDay}` +
+        ` | pts ${context.score.shiftPoints} combo ${context.score.combo} total ${context.score.total}` +
         ` | pop ${c.population|0} néc ${c.nectar|0} pól ${c.pollen|0} cera ${c.wax|0} saúde ${c.health|0}` +
         (missing.length ? ` | stubs: ${missing.join(',')}` : '')
     },

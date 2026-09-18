@@ -5,7 +5,7 @@ import StateMachine from './engine/StateMachine.js'
 import { create as createLoop } from './engine/GameLoop.js'
 import { createControls } from './ui/Controls.js'
 import { getLayout, installViewportGuards } from './ui/layout.js'
-import { installGameSession } from './systems/GameSession.js'
+import { installGameSession, TASK_ORDER } from './systems/GameSession.js'
 import AudioSystem from './systems/AudioSystem.js'
 import IntroState from './states/IntroState.js'
 import MenuState from './states/MenuState.js'
@@ -54,11 +54,14 @@ const loop = createLoop({
       context.layout = getLayout(renderer.width, renderer.height)
     controls.update(dt, context.layout)
     machine.update(dt)
+    context.score?.update(dt)
     input.endFrame()
   },
   render() {
     renderer.clear('#1a1410')
     machine.render(renderer.getContext())
+    // Popups de pontos e selo de combo por cima da tarefa (só durante um turno).
+    if (TASK_ORDER.includes(machine.currentName)) context.score?.render(renderer.getContext(), context.layout)
     if (context.saveFailed) {
       const ctx = renderer.getContext()
       ctx.save()
