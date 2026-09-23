@@ -80,3 +80,17 @@ test('unavailable audio and rejected resume never reject gameplay actions', asyn
   assert.equal(await blocked.unlock(), false)
   blocked.playResult(1)
 })
+
+test('playResult usa a escala 0–100 do turno: abaixo de 50 toca o acorde de falha', async () => {
+  const midiOf = (hz) => Math.round(69 + 12 * Math.log2(hz / 440))
+  const played = async (score) => {
+    const audio = new AudioSystem({ AudioContext: FakeContext })
+    await audio.unlock()
+    audio.playResult(score)
+    return audio.context.oscillators.map((o) => midiOf(o.frequency.value))
+  }
+  assert.deepEqual(await played(1), [64, 62, 60])
+  assert.deepEqual(await played(49), [64, 62, 60])
+  assert.deepEqual(await played(50), [67, 72, 76])
+  assert.deepEqual(await played(100), [67, 72, 76])
+})

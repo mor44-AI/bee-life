@@ -1,6 +1,6 @@
-// BirthState - nascimento (~7.5s): célula de cria sob uma "lente" de instrumento
+// BirthState - nascimento (~10s): célula de cria sob uma "lente" de instrumento
 // técnico, passando por ovo → larva → pupa (corte lateral) → abelha jovem
-// emergindo. Pulável tocando/clicando em qualquer lugar ou por tecla. Termina com
+// emergindo, seguida de uma curiosidade (nextFact()). Pulável tocando/clicando em qualquer lugar ou por tecla. Termina com
 // context.completeBirth(). Composição na área segura, vertical primeiro.
 
 import { ease } from '../engine/tween.js'
@@ -19,15 +19,17 @@ import {
   anyKeyPressed,
   isTouchUI,
   drawHint,
+  drawFact,
 } from '../ui/HUD.js'
 import { t as tr } from '../i18n/index.js'
+import { nextFact } from '../data/facts.js'
 
 const SKIP_KEYS = ['Enter', 'NumpadEnter', 'Space', 'Escape']
 const T_LARVA = 2.3
 const T_PUPA = 3.9
 const T_EMERGE = 5.3
 const T_TITLE = 6.3
-const T_END = 7.8
+const T_END = 10.5 // tempo para ler a curiosidade (toque pula)
 const XFADE = 0.45
 
 const STAGES = [
@@ -57,6 +59,7 @@ const pupaCache = createLayerCache((c, w, h) => {
 
 let t = 0
 let done = false
+let fact = null
 
 const clamp01 = (v) => Math.max(0, Math.min(1, v))
 const seg = (time, a, b, type = 'easeInOutCubic') => ease(clamp01((time - a) / (b - a)), type)
@@ -71,6 +74,7 @@ export default {
   enter(context) {
     t = 0
     done = false
+    fact = nextFact()
     context.input.consumeClicks()
   },
 
@@ -275,17 +279,31 @@ export default {
       titleSize -= 1
       ctx.font = font(titleSize)
     }
-    ctx.fillText(title, cx, Math.max(SA.y + 46, cy - lensR * 1.12 - 26))
-    const fp = seg(t, T_EMERGE - 0.2, T_EMERGE + 0.8)
-    const factText = tr('birth.fact')
-    if (fp > 0) {
-      ctx.globalAlpha = fp * 0.85
-      ctx.font = font(15.5 * u, { style: 'italic' })
-      const lines = wrapText(ctx, factText, Math.min(520, SA.w - 48))
-      const fy = ly + 70 * u
-      lines.forEach((line, i) => ctx.fillText(line, cx, fy + i * 22 * u))
-    }
+    const titleY = Math.max(SA.y + 46, cy - lensR * 1.12 - 26)
+    ctx.fillText(title, cx, titleY)
     ctx.restore()
+    // Curiosidade (rodízio de nextFact) entre a legenda e a dica; encolhe para caber.
+    const fp = seg(t, T_EMERGE - 0.2, T_EMERGE + 0.8)
+    if (fp > 0 && fact) {
+      let rect = null
+      const fw = Math.min(520, SA.w - 40)
+      const fy = ly + 44 * u
+      const fh = SA.y + SA.h - 38 * u - fy
+      let align = 'center'
+      if (fh > 72) rect = { x: cx - fw / 2, y: fy, w: fw, h: fh }
+      else if (SA.w > SA.h * 1.3) {
+        // Tela baixa e deitada: curiosidade na coluna à direita da lente.
+        const x0 = cx + lensR * 1.3
+        const top = Math.max(titleY + 14, cy - lensR * 1.1)
+        rect = { x: x0, y: top, w: SA.x + SA.w - 16 - x0, h: SA.y + SA.h - 40 * u - top }
+        align = 'left'
+      }
+      if (rect && rect.w > 120 && rect.h > 40) {
+        drawFact(ctx, rect, fact, {
+          u, align, alpha: fp * 0.9, size: 15 * u, minSize: 11, labelAlpha: 0.75,
+        })
+      }
+    }
     drawHint(ctx, L, tr(isTouchUI(context) ? 'app.tapToSkip' : 'app.clickToSkip'), seg(t, 1, 2))
 
     fadeScreen(ctx, w, h, (1 - seg(t, 0, 0.5)) * 0.6, UI.paper)

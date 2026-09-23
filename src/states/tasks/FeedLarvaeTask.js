@@ -63,6 +63,21 @@ const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by)
 
 const SPECIAL = { chargeTime: 22, duration: 6, drop: 0.55, perfectBonus: 0.06, goodBonus: 0.025 }
 
+// Pontuação arcade (context.score - ScoreSystem): pontos por alimentação, na célula.
+// As alimentações são poucas e espaçadas (voo + janela + reabastecer: ~9-13 por
+// turno) e o combo quase nunca passa de ×1,5, então as bases ficam ~2× o sugerido
+// em config.scoring.base para um turno médio render ~targetShiftActionPoints
+// (calibrado por bot: preciso ≈ 2.000, mediano ≈ 1.400-1.600).
+const SB = config.scoring.base
+const SCORE = {
+  perfect: SB.perfect * 2, // janela perfeita
+  great: SB.great * 2, // borda da janela numa larva já inquieta/crítica
+  normal: Math.round(SB.normal * 2.4), // borda da janela numa larva calma
+  rescue: SB.great, // bônus extra ao salvar uma larva em fome crítica
+  special: SB.great * 1.5, // chamado das nutrizes (+ por larva atendida, até 4)
+  specialPer: SB.small * 1.5,
+}
+
 function buildDifficulty(difficulty = config.difficulty.training) {
   const d = clamp(Number.isFinite(difficulty) ? difficulty : config.difficulty.training, 0, 1)
   const L = (a, b) => a + (b - a) * d
@@ -611,6 +626,13 @@ function makeLarva(i, D, initial) {
   return larva
 }
 
+// Célula da larva no layout atual (null se o favo não tem célula para ela -
+// telas pequenas/deitadas com muitas larvas). Larvas sem célula ficam fora do
+// turno (sem fome, sem pontuação) até um layout com espaço para elas.
+function cellOf(larva) {
+  return (S && S.layout && S.layout.slots[larva.index]) || null
+}
+
 function layoutFor(context) {
   const lay = context.layout
   if (lay && lay.width === context.width && lay.height === context.height) return lay
@@ -689,7 +711,8 @@ function hatch(larva) {
   larva.hatchAnim = 0
   larva.hunger.value = 25 + Math.random() * (10 + 10 * S.D.d)
   S.stats.hungerGenerated += larva.hunger.value
-  const cell = S.layout.slots[larva.index]
+  larva.counted = true
+  const cell = cellOf(larva)
   if (cell) S.rings.push({ x: cell.x, y: cell.y, r: cell.size * 0.4, grow: cell.size * 0.9, life: 0, max: 0.6, color: P.caterpillarCream, width: 1.2, rays: 0 })
   if (S.meter.isActive) spawnNurse(larva, 0)
 }
@@ -725,8 +748,10 @@ function spawnNurse(larva, delay) {
 function activateSpecial() {
   if (S.phase !== 'play' || !S.meter.activate()) return
   let i = 0
+  let helped = 0
   for (const larva of S.larvae) {
-    if (larva.state !== 'larva') continue
+    if (larva.state !== 'larva' || !cellOf(larva)) continue
+    if (larva.hunger.value > 18) helped++
     const delay = i++ * 0.07
     spawnNurse(larva, delay)
     larva.callDrop = { from: larva.hunger.value, to: larva.hunger.value * (1 - SPECIAL.drop), t: -delay - 0.45 }
@@ -736,10 +761,14 @@ function activateSpecial() {
   S.callFlash = 1
   const L = S.layout
   addFloater(L.comb.cx, L.comb.cy - L.comb.ry * 0.9, tr('feedLarvae.nurseCall'), P.sunHalo)
+  if (helped > 0) {
+    S.score?.award(SCORE.special + SCORE.specialPer * Math.min(helped, 4), { x: L.comb.cx, y: L.comb.cy - L.comb.ry * 0.55, reason: 'score.reason.special' })
+  }
 }
 
 function nursePosition(n, t) {
-  const c = S.layout.slots[n.larva.index]
+  const c = cellOf(n.larva)
+  if (!c) return null
   const R = c.size
   const hx = c.x + n.face * R * 0.15 + Math.sin(t * 1.7 + n.seed) * R * 0.12
   const hy = c.y - R * 0.55 + Math.sin(t * 3.1 + n.seed) * R * 0.08
@@ -791,6 +820,7 @@ function drawSpecialLayer(ctx, L, t) {
   for (const n of S.nurses) {
     if (n.t < 0) continue
     const p = nursePosition(n, t)
+    if (!p) continue
     drawNurseSilhouette(ctx, p.x, p.y, L.beeScale * 0.85, n.face, t, n.seed, 0.85 * p.a, p.flying)
   }
   if (!m.isActive) return
@@ -802,6 +832,7 @@ function drawSpecialLayer(ctx, L, t) {
   for (const larva of S.larvae) {
     if (larva.state !== 'larva') continue
     const c = L.slots[larva.index]
+    if (!c) continue
     ctx.beginPath()
     ctx.arc(c.x, c.y, c.size * 1.18, 0, TAU)
     ctx.stroke()
@@ -860,8 +891,8 @@ function handleAction() {
     return
   }
   const larva = dock.larva
-  const cell = S.layout.slots[larva.index]
-  if (larva.state !== 'larva') return
+  const cell = cellOf(larva)
+  if (!cell || larva.state !== 'larva') return
   if (!dock.tw) {
     // larva saciada: vira de lado, nada acontece
     larva.twitch = 0.6
@@ -890,9 +921,11 @@ function handleAction() {
     S.wasteFlash = 1
     larva.twitch = 1
     addFloater(cell.x, cell.y - R * 1.2, tr('feedLarvae.waste'), '#E9D9B0')
+    S.score?.miss()
     return
   }
   const amount = result === 'perfect' ? S.D.perfectRelief : S.D.goodRelief
+  const hungerState = larva.hunger.state
   const before = larva.hunger.value
   larva.hunger.subtract(amount)
   larva.callDrop = null
@@ -905,13 +938,19 @@ function handleAction() {
     S.meter.add(SPECIAL.perfectBonus)
     S.shake = Math.max(S.shake, 2.5)
     burst(cell.x, cell.y, 'perfect', R)
-    addFloater(cell.x, cell.y - R * 1.25, tr('feedLarvae.perfect'), P.sunHalo)
+    // o rótulo "perfeito!" vem no popup de pontos (ScoreSystem)
+    S.score?.award(SCORE.perfect, { x: cell.x, y: cell.y - R * 0.9, reason: 'score.reason.perfect' })
   } else {
     S.stats.good += 1
     S.meter.add(SPECIAL.goodBonus)
     burst(cell.x, cell.y, 'good', R)
-    addFloater(cell.x, cell.y - R * 1.2, tr('feedLarvae.good'), P.leafSageHighlight)
+    const hungry = hungerState !== 'calm'
+    S.score?.award(hungry ? SCORE.great : SCORE.normal, {
+      x: cell.x, y: cell.y - R * 0.9, reason: hungry ? 'score.reason.great' : 'score.reason.good',
+    })
   }
+  // salvou uma larva em fome crítica: bônus extra, um pouco acima
+  if (hungerState === 'critical') S.score?.award(SCORE.rescue, { x: cell.x, y: cell.y - R * 1.9, reason: 'score.reason.bonus' })
 }
 
 function computeScore(st) {
@@ -987,6 +1026,8 @@ export default {
     S = {
       D,
       meter,
+      score: context.score ?? null,
+      free: !!data?.free,
       shiftIndex: data?.shiftIndex ?? 0,
       layoutSeed: 900 + ((data?.shiftIndex ?? 0) * 131) + Math.floor(Math.random() * 7),
       layout: null,
@@ -1027,7 +1068,6 @@ export default {
         weakenEvents: 0, lost: 0, larvaTime: 0, criticalTime: 0, hungerTime: 0,
       },
     }
-    for (const l of larvae) if (l.state === 'larva') S.stats.hungerGenerated += l.hunger.value
     context.controls?.configure({ showDirections: false, showAction: true, showSpecial: true, meter, actionLabel: tr('feedLarvae.action'), specialLabel: tr('feedLarvae.special') })
     ensureLayout(context)
   },
@@ -1071,7 +1111,7 @@ export default {
     for (const n of S.nurses) {
       n.t += dt
       if (n.leave >= 0) n.leave += dt
-      if (n.larva.state === 'lost' && n.leave < 0) n.leave = 0
+      if ((n.larva.state === 'lost' || !cellOf(n.larva)) && n.leave < 0) n.leave = 0
     }
     S.nurses = S.nurses.filter((n) => n.leave < 0.7)
 
@@ -1251,12 +1291,18 @@ export default {
       larva.twitch = Math.max(0, larva.twitch - dt * 3)
       larva.weakFlash = Math.max(0, larva.weakFlash - dt * 1.2)
       larva.feedFlash = Math.max(0, larva.feedFlash - dt * 2.5)
+      // sem célula no layout atual: fica fora do turno (não choca, não sente fome)
+      if (!L.slots[larva.index]) continue
       if (larva.state === 'egg') {
         larva.hatchSoon = clamp(1 - (larva.hatchAt - S.progress) / 0.04, 0, 1)
         if (S.progress >= larva.hatchAt) hatch(larva)
         continue
       }
       if (larva.state === 'lost') continue
+      if (!larva.counted) {
+        larva.counted = true
+        S.stats.hungerGenerated += larva.hunger.value
+      }
       larva.hatchAnim = Math.min(1, larva.hatchAnim + dt * 1.8)
       // queda animada do chamado das nutrizes (conta como fome aliviada)
       if (larva.callDrop) {
@@ -1295,6 +1341,7 @@ export default {
             burst(c.x, c.y, 'weak', c.size)
             addFloater(c.x, c.y - c.size * 1.3, larva.vitality <= 0 ? tr('feedLarvae.larvaLost') : tr('feedLarvae.weakened'), '#E9D9B0')
           }
+          S.score?.miss()
           if (larva.vitality <= 0) {
             larva.state = 'lost'
             S.stats.lost += 1
@@ -1363,16 +1410,11 @@ export default {
     ctx.restore()
 
     // destino do piloto automático (toque numa célula/potes)
-    if (S.auto) {
-      let ax
-      let ay
-      let ar
-      if (S.auto.kind === 'larva') {
-        const c = L.slots[S.auto.larva.index]
-        ax = c.x; ay = c.y; ar = c.size * 1.22
-      } else {
-        ax = pot.x; ay = pot.y; ar = pot.zoneR * 0.6
-      }
+    const autoCell = S.auto && S.auto.kind === 'larva' ? L.slots[S.auto.larva.index] : null
+    if (S.auto && (S.auto.kind !== 'larva' || autoCell)) {
+      const ax = autoCell ? autoCell.x : pot.x
+      const ay = autoCell ? autoCell.y : pot.y
+      const ar = autoCell ? autoCell.size * 1.22 : pot.zoneR * 0.6
       ctx.save()
       ctx.strokeStyle = withAlpha(P.caterpillarCream, 0.7)
       ctx.lineWidth = 1
@@ -1412,7 +1454,7 @@ export default {
     }
 
     // anel de aproximação da janela de alimentação
-    if (dock && dock.tw && S.phase === 'play') {
+    if (dock && dock.tw && S.phase === 'play' && L.slots[dock.larva.index]) {
       const c = L.slots[dock.larva.index]
       const R = c.size
       const tw = dock.tw
@@ -1712,6 +1754,33 @@ function drawHUD(ctx, L, reveal) {
       ctx.lineWidth = 1
       ctx.stroke()
       ctx.setLineDash([])
+    }
+  }
+
+  // selo discreto de turno livre, à direita da faixa
+  if (S.free) {
+    const label = tr('feedLarvae.freeShift')
+    ctx.font = `italic 600 ${Math.round(11 * k)}px Georgia, serif`
+    ctx.textAlign = 'right'
+    ctx.textBaseline = 'middle'
+    const bw = ctx.measureText(label).width + 16 * k
+    const bh = 20 * k
+    const bx = hud.x + hud.w - 10 - bw
+    const minX = sx + gap * n + 16 * k // não cobre as pastilhas de estoque
+    if (bx > minX) {
+      ctx.globalAlpha = reveal
+      ctx.fillStyle = withAlpha(P.paperCreamDark, 0.85)
+      ctx.strokeStyle = withAlpha(INK_LINE, 0.55)
+      ctx.lineWidth = 1
+      ctx.setLineDash([3, 2])
+      ctx.beginPath()
+      if (ctx.roundRect) ctx.roundRect(bx, cy - bh / 2, bw, bh, bh / 2)
+      else ctx.rect(bx, cy - bh / 2, bw, bh)
+      ctx.fill()
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = withAlpha(INK_LINE, 0.8)
+      ctx.fillText(label, bx + bw - 8 * k, cy + 0.5)
     }
   }
   ctx.restore()

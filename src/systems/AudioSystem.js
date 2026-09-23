@@ -1,5 +1,7 @@
 // Procedural sound effects. The opening music lives in public/video/intro.mp4.
 const STORAGE_KEY = 'vida-de-abelha.audio.v1'
+export const RESULT_SUCCESS_SCORE = 50
+export const isSuccessScore = (score) => Number.isFinite(score) && score >= RESULT_SUCCESS_SCORE
 
 export default class AudioSystem {
   constructor({ storage, AudioContext } = {}) {
@@ -94,10 +96,11 @@ export default class AudioSystem {
     osc.stop(start + duration + 0.02)
   }
 
-  playResult(score = 0.5) {
+  // score na escala 0–100 usada por GameSession.finishShift.
+  playResult(score = RESULT_SUCCESS_SCORE) {
     if (!this.effectsEnabled || this.paused || this.context?.state !== 'running') return
     const now = this.context.currentTime
-    const notes = score >= 0.5 ? [67, 72, 76] : [64, 62, 60]
+    const notes = isSuccessScore(score) ? [67, 72, 76] : [64, 62, 60]
     notes.forEach((midi, i) => this.tone(midi, now + i * 0.12, 0.55, 0.13))
   }
   playPromotion() {

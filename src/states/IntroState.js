@@ -2,7 +2,9 @@
 // Um <video> DOM fica sobre o canvas. Como navegadores bloqueiam autoplay com áudio,
 // primeiro aparece "Toque/Clique para começar": esse gesto inicia o vídeo com som e
 // também desbloqueia o AudioSystem (main.js escuta pointerdown/keydown na window).
-// "Pular" (ou Esc/Enter/Espaço) e o fim do vídeo levam ao menu. Toca sozinho só na
+// Durante o vídeo não há botão sempre visível: um toque/clique em qualquer lugar revela
+// um "Pular" discreto (canto inferior, alvo ≥ 44px) que some após SKIP_HIDE_MS sem
+// interação. Esc pula direto; tocar no "Pular" ou o fim do vídeo levam ao menu. Toca sozinho só na
 // primeira visita (flag em localStorage); o menu reabre com goTo('intro', { replay: true }).
 // Se o arquivo faltar ou não ficar reproduzível em LOAD_TIMEOUT_MS, segue para o menu.
 
@@ -12,8 +14,8 @@ import { t, onLangChange } from '../i18n/index.js'
 
 export const INTRO_SEEN_KEY = 'vida-de-abelha.intro-seen.v1'
 const LOAD_TIMEOUT_MS = 8000
+const SKIP_HIDE_MS = 3000
 const START_KEYS = ['Enter', 'NumpadEnter', 'Space']
-const SKIP_KEYS = ['Escape', ...START_KEYS]
 const BASE = import.meta.env?.BASE_URL ?? '/'
 const VIDEO_SRC = `${BASE}video/intro.mp4`
 const POSTER_SRC = `${BASE}video/intro-poster.jpg`
@@ -51,12 +53,33 @@ const CSS = `
 .intro-btn:active{transform:translateY(1px);box-shadow:1px 2px 0 rgba(26,20,16,.45)}
 .intro-play{font-size:22px;padding:0 34px;min-width:min(320px,100%)}
 .intro-sub{color:${UI.paper};font-style:italic;font-size:15px;opacity:.85;text-align:center}
-.intro-skip{position:absolute;right:calc(var(--safe-right,0px) + 16px);bottom:calc(var(--safe-bottom,0px) + 20px);
-  font-size:19px;min-width:120px;padding:0 22px;opacity:.92}
+.intro-skip{position:absolute;right:calc(var(--safe-right,0px) + 12px);bottom:calc(var(--safe-bottom,0px) + 12px);
+  font-size:15px;min-height:44px;min-width:64px;padding:0 16px;color:${UI.paper};background:rgba(26,20,16,.42);
+  border-color:rgba(247,240,224,.55);box-shadow:none;opacity:0;pointer-events:none;transition:opacity .25s ease}
+.intro-skip.is-on{opacity:.72;pointer-events:auto}
+.intro-skip.is-on:hover,.intro-skip.is-on:focus-visible{opacity:.95}
+.intro-skip:active{box-shadow:none}
 `
 
 let ui = null // { root, video, start, abort, timer }
 let exitRequested = false
+
+function hideSkip() {
+  if (!ui) return
+  if (ui.skipTimer) clearTimeout(ui.skipTimer)
+  ui.skipTimer = 0
+  ui.skip.classList.remove('is-on')
+  ui.skip.tabIndex = -1
+}
+
+// Revela o "Pular" discreto (só com o vídeo já iniciado) e reinicia o prazo para sumir.
+function revealSkip() {
+  if (!ui || ui.start.isConnected) return
+  ui.skip.classList.add('is-on')
+  ui.skip.tabIndex = 0
+  if (ui.skipTimer) clearTimeout(ui.skipTimer)
+  ui.skipTimer = setTimeout(hideSkip, SKIP_HIDE_MS)
+}
 
 function clearTimer() {
   if (ui?.timer) clearTimeout(ui.timer)
@@ -111,6 +134,7 @@ function buildUI(context) {
   const skip = document.createElement('button')
   skip.type = 'button'
   skip.className = 'intro-btn intro-skip'
+  skip.tabIndex = -1
   const applyTexts = () => {
     play.textContent = t(touch ? 'intro.tapToStart' : 'intro.clickToStart')
     sub.textContent = t('intro.withSound')
@@ -126,6 +150,11 @@ function buildUI(context) {
   on(start, 'click', () => {
     void context.audio?.unlock?.()
     startVideo()
+  })
+  // Toque/clique em qualquer ponto do vídeo revela o "Pular" (e renova o prazo).
+  on(root, 'pointerdown', (e) => {
+    if (e.target === skip && skip.classList.contains('is-on')) return
+    revealSkip()
   })
   on(skip, 'click', (e) => {
     e.stopPropagation()
@@ -147,12 +176,13 @@ function buildUI(context) {
       video.play()?.catch?.(() => {})
     }
   })
-  return { root, video, start, abort, timer: 0, muted: context.audio?.muted === true }
+  return { root, video, start, skip, skipTimer: 0, abort, timer: 0, muted: context.audio?.muted === true }
 }
 
 function destroyUI() {
   if (!ui) return
   clearTimer()
+  hideSkip()
   ui.abort.abort()
   const { video, root } = ui
   ui = null
@@ -180,7 +210,8 @@ export default {
       if (ui.start.isConnected) {
         if (anyKeyPressed(context.input, ['Escape'])) { markIntroSeen(); requestExit() }
         else if (anyKeyPressed(context.input, START_KEYS)) startVideo()
-      } else if (anyKeyPressed(context.input, SKIP_KEYS)) requestExit()
+      } else if (anyKeyPressed(context.input, ['Escape'])) requestExit()
+      else if (anyKeyPressed(context.input, START_KEYS)) revealSkip()
     }
     context.input.consumeClicks()
     if (exitRequested) {

@@ -13,6 +13,9 @@ export default {
       `${pests} ${pests === 1 ? 'traça capturada' : 'traças capturadas'}, ` +
       `favo ${damage}% danificado`,
     'cleaning.summaryResin': '; resina usada {n}×',
+    'cleaning.summaryAnts': ({ n }) => `; ${n} ${n === 1 ? 'formiga repelida' : 'formigas repelidas'}`,
+    'cleaning.invasion': 'Invasão!',
+    'cleaning.freeShift': 'Turno livre',
   },
   en: {
     'cleaning.hintTouch': 'drag to fly · touch to grab · take it to the exit',
@@ -27,5 +30,8 @@ export default {
       `${pests} ${pests === 1 ? 'moth' : 'moths'} caught, ` +
       `comb ${damage}% damaged`,
     'cleaning.summaryResin': '; resin used {n}×',
+    'cleaning.summaryAnts': ({ n }) => `; ${n} ${n === 1 ? 'ant' : 'ants'} repelled`,
+    'cleaning.invasion': 'Invasion!',
+    'cleaning.freeShift': 'Free shift',
   },
 }

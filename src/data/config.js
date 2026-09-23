@@ -49,6 +49,42 @@ export const config = {
     shiftGrace: 10, // segundos tranquilos no começo de cada turno
   },
 
+  // Pontuação "arcade" (ScoreSystem, context.score). Independente do score 0-100
+  // de finishShift, que continua sendo o que afeta a colônia.
+  // Ordens de grandeza: um turno médio ~1.500-3.000 pontos (ação + bônus da fase);
+  // uma vida completa (10 turnos + bônus final) ~20.000-40.000.
+  scoring: {
+    // Sem award por este tempo (s) o combo expira.
+    comboTimeout: 2.5,
+    // Multiplicador pelo combo (já incluindo o acerto atual): o 3º acerto seguido
+    // já vale ×1,5. Ordem decrescente; o primeiro que casar vence.
+    multipliers: [
+      { combo: 10, mult: 3 },
+      { combo: 6, mult: 2 },
+      { combo: 3, mult: 1.5 },
+    ],
+    // Guia para as tarefas escolherem o `base` de award(): num turno de 42 s,
+    // ~35-60 acertos "normal" somam ~1.000-2.000 pontos de ação com combos.
+    base: { small: 10, normal: 25, great: 50, perfect: 80 },
+    targetShiftActionPoints: 1500,
+    // Bônus de fase no fim do turno: max × Σ(peso × indicador/100), lido da colônia
+    // DEPOIS de aplicar o resultado do turno (antes do desgaste da noite). Fases
+    // mais avançadas valem mais (max crescente).
+    phaseBonus: {
+      cleaning: { max: 900, weights: { health: 0.6, wax: 0.4 } },
+      feedLarvae: { max: 1000, weights: { population: 0.5, pollen: 0.5 } },
+      feedQueen: { max: 1100, weights: { population: 0.5, nectar: 0.5 } },
+      guard: { max: 1200, weights: { health: 0.5, propolis: 0.5 } },
+    },
+    // Turno livre (rejogar fase passada): fração do efeito do turno aplicada à colônia.
+    freeColonyEffect: 0.5,
+    // Bônus final da vida: cada indicador 0-100 vale perPoint pontos por ponto.
+    finalBonus: {
+      perPoint: 30,
+      indicators: ['population', 'nectar', 'pollen', 'propolis', 'wax', 'health'],
+    },
+  },
+
   // Taxas de decaimento/recuperação usadas por ColonyState.tickDecay(dt),
   // aplicadas proporcionalmente a `dt` (dias-jogáveis).
   colonyDecay: {
