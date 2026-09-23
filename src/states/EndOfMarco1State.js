@@ -33,6 +33,7 @@ import {
   anyKeyPressed,
   isTouchUI,
   drawHint,
+  pointInRect,
 } from '../ui/HUD.js'
 import leaderboard, { NAME_MAX } from '../systems/Leaderboard.js'
 import { t as tr, getLang } from '../i18n/index.js'
@@ -333,6 +334,9 @@ function computeBoardLayout(context, ctx) {
   const rowCount = naming || submitted ? 10 : 11
   const side = S.w > S.h
 
+  // Link discreto "Apoiar o projeto" perto do botão de voltar ao menu.
+  const linkH = Math.max(26, Math.round(30 * u))
+
   if (!side) {
     const cx = S.x + S.w / 2
     const colW = Math.min(520, S.w - 24)
@@ -346,10 +350,11 @@ function computeBoardLayout(context, ctx) {
     }
     const btnW = Math.min(360, S.w - 40)
     const btn = { x: cx - btnW / 2, y: S.y + S.h - btnH - 40 * u, w: btnW, h: btnH }
-    const bottom = naming ? S.y + S.h - 12 * u : btn.y - 12 * u
+    const donate = { x: cx - btnW / 2, y: btn.y - linkH - 6 * u, w: btnW, h: linkH }
+    const bottom = naming ? S.y + S.h - 12 * u : donate.y - 12 * u
     const rowH = Math.min(34 * u, (bottom - y) / rowCount)
     const table = { x: head.x, y, w: colW, h: rowH * rowCount }
-    return { L, S, u, side, head, headAlign: 'center', titleSize, scoreSize, noteSize, panelRect, table, btn, hintBelow: true }
+    return { L, S, u, side, head, headAlign: 'center', titleSize, scoreSize, noteSize, panelRect, table, btn, donate, hintBelow: true }
   }
 
   // Deitado: título, pontuação e painel/botão à esquerda; tabela à direita.
@@ -359,19 +364,24 @@ function computeBoardLayout(context, ctx) {
   const gap = 20 * u
   const rightW = totalW - leftW - gap
   const hintSize = 12.5 * u
-  const leftBlock = headH + 12 * u + (naming ? panelH : btnH + 8 * u + hintSize * 1.3)
+  const leftBlock = headH + 12 * u + (naming ? panelH : btnH + linkH + 14 * u + hintSize * 1.3)
   const top = S.y + Math.max(8 * u, (S.h - leftBlock) / 2)
   const head = { x: x0, y: top, w: leftW }
   let panelRect = null
   let btn = null
+  let donate = null
   const below = top + headH + 12 * u
   if (naming) panelRect = { x: x0, y: below, w: leftW, h: panelH }
-  else btn = { x: x0 + (leftW - Math.min(leftW, 320)) / 2, y: below, w: Math.min(leftW, 320), h: btnH }
+  else {
+    const w = Math.min(leftW, 320)
+    btn = { x: x0 + (leftW - w) / 2, y: below, w, h: btnH }
+    donate = { x: btn.x, y: btn.y + btn.h + 8 * u, w, h: linkH }
+  }
   const availH = S.h - 16 * u
   const rowH = Math.min(36 * u, availH / rowCount)
   const tableH = rowH * rowCount
   const table = { x: x0 + leftW + gap, y: S.y + (S.h - tableH) / 2, w: rightW, h: tableH }
-  return { L, S, u, side, head, headAlign: 'center', titleSize, scoreSize, noteSize, panelRect, table, btn, hintSize }
+  return { L, S, u, side, head, headAlign: 'center', titleSize, scoreSize, noteSize, panelRect, table, btn, donate, hintSize }
 }
 
 function isRecord() {
@@ -822,6 +832,7 @@ function renderBoardPage(context, ctx) {
     ctx.save()
     ctx.globalAlpha = ready
     drawButton(ctx, M.btn, tr('end.backToMenu'), { focused: true, accent: false, time: bt })
+    if (M.donate) drawDonateLink(ctx, M.donate)
     ctx.restore()
     const hint = tr(isTouchUI(context) ? 'end.tapHint' : 'end.clickHint')
     if (M.side) {
@@ -831,7 +842,8 @@ function renderBoardPage(context, ctx) {
       ctx.textAlign = 'center'
       ctx.textBaseline = 'alphabetic'
       fitSize(ctx, hint, M.head.w, M.hintSize, 9, { style: 'italic' })
-      ctx.fillText(hint, M.btn.x + M.btn.w / 2, M.btn.y + M.btn.h + 8 * u + M.hintSize)
+      const hintY = (M.donate ? M.donate.y + M.donate.h : M.btn.y + M.btn.h) + 8 * u + M.hintSize
+      ctx.fillText(hint, M.btn.x + M.btn.w / 2, hintY)
       ctx.restore()
     } else {
       drawHint(ctx, M.L, hint, ready)
@@ -873,6 +885,13 @@ export default {
       if (anyKeyPressed(input, ['Escape'])) decide(false)
       return
     }
+    if (bt >= 0.5 && clicks.length) {
+      const M = computeBoardLayout(context, context.renderer.getContext())
+      if (M.donate && clicks.some((c) => pointInRect(c, M.donate))) {
+        context.goTo('donate')
+        return
+      }
+    }
     const pressed = clicks.length > 0 || anyKeyPressed(input, KEYS)
     if (pressed && bt >= 0.5) context.goTo('menu')
   },
@@ -891,5 +910,21 @@ export default {
     naming = false
     lastBoardSlot = null
   },
+}
+
+function drawDonateLink(ctx, rect) {
+  const cx = rect.x + rect.w / 2
+  const cy = rect.y + rect.h / 2
+  const label = tr('end.donate')
+  ctx.save()
+  ctx.fillStyle = UI.ink
+  ctx.globalAlpha *= 0.75
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = font(Math.max(13, rect.h * 0.45), { style: 'italic' })
+  ctx.fillText(label, cx, cy)
+  const tw = ctx.measureText(label).width
+  ctx.restore()
+  drawGuideLine(ctx, cx - tw / 2, cy + rect.h * 0.32, cx + tw / 2, cy + rect.h * 0.32, { alpha: 0.3 })
 }
 
