@@ -12,6 +12,7 @@ import BirthState from './states/BirthState.js'
 import TaskHubState from './states/TaskHubState.js'
 import PromotionState from './states/PromotionState.js'
 import EndOfMarco1State from './states/EndOfMarco1State.js'
+import DonateState from './states/DonateState.js'
 import CleaningTask from './states/tasks/CleaningTask.js'
 import FeedLarvaeTask from './states/tasks/FeedLarvaeTask.js'
 import FeedQueenTask from './states/tasks/FeedQueenTask.js'
@@ -40,7 +41,7 @@ context.goTo = (name, data) => {
 installGameSession(context)
 for (const [name, state] of Object.entries({
   intro: IntroState, menu: MenuState, birth: BirthState, hub: TaskHubState,
-  promotion: PromotionState, night: NightState, end: EndOfMarco1State, cleaning: CleaningTask,
+  promotion: PromotionState, night: NightState, end: EndOfMarco1State, donate: DonateState, cleaning: CleaningTask,
   feedLarvae: FeedLarvaeTask, feedQueen: FeedQueenTask, guard: GuardTask,
 })) machine.register(name, state)
 

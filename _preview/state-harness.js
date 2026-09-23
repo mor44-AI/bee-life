@@ -43,7 +43,7 @@
 //   context.elapsed += dt -> layout (se mudou) -> controls.update(dt, layout)
 //   -> machine.update(dt) -> input.endFrame() ; depois render.
 //
-// NOMES DE ESTADO: 'intro','menu','birth','hub','promotion','end',
+// NOMES DE ESTADO: 'intro','menu','birth','hub','promotion','end','donate',
 //                  'cleaning','feedLarvae','feedQueen','guard' (tarefa = id do rank)
 //                  + 'controls' (só harness: demonstração)
 // enter(context, data) de tarefa recebe data = { shiftIndex, difficulty }
@@ -73,6 +73,7 @@ const MODULES = {
   hub: '../src/states/TaskHubState.js',
   promotion: '../src/states/PromotionState.js',
   end: '../src/states/EndOfMarco1State.js',
+  donate: '../src/states/DonateState.js',
   cleaning: '../src/states/tasks/CleaningTask.js',
   feedLarvae: '../src/states/tasks/FeedLarvaeTask.js',
   feedQueen: '../src/states/tasks/FeedQueenTask.js',

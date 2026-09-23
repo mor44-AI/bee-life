@@ -71,6 +71,7 @@ export default {
     'end.backToMenu': 'Voltar ao menu',
     'end.tapHint': 'toque para voltar ao menu',
     'end.clickHint': 'clique ou Enter para voltar ao menu',
+    'end.donate': 'Apoiar o projeto',
   },
   en: {
     'app.title': 'Bee Life',
@@ -143,5 +144,6 @@ export default {
     'end.backToMenu': 'Back to menu',
     'end.tapHint': 'tap to return to the menu',
     'end.clickHint': 'click or press Enter to return to the menu',
+    'end.donate': 'Support the project',
   },
 }

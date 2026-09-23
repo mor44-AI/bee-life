@@ -22,6 +22,7 @@ import {
   anyKeyPressed,
   isTouchUI,
   drawHint,
+  pointInRect,
 } from '../ui/HUD.js'
 import { t as tr } from '../i18n/index.js'
 
@@ -74,18 +75,21 @@ function computeLayout(context, ctx) {
   const btnH = Math.max(L.minTouch ?? 56, Math.round(60 * u))
   const btnW = Math.min(360, S.w - 40)
   const btn = { x: cx - btnW / 2, y: S.y + S.h - btnH - 40 * u, w: btnW, h: btnH }
+  // Link discreto "Apoiar o projeto" entre o cartão-resumo e o botão principal.
+  const linkH = Math.max(28, Math.round(32 * u))
+  const donate = { x: cx - btnW / 2, y: btn.y - linkH - 8 * u, w: btnW, h: linkH }
 
   // Altura fixa (sem o emblema) -> o emblema fica com o espaço que sobra.
   const fixed = 16 * u + titleSize + titleSize * 0.85 + (subLines.length - 1) * subLH + 22 * u + 16 * u + cardH + 16 * u
-  const avail = btn.y - S.y - fixed
+  const avail = donate.y - S.y - fixed
   const R = clamp(avail / 3.3, 34, Math.min(S.w * 0.2, 120))
   const cy = S.y + 12 * u + R * 1.6
   const titleY = cy + R * 1.6 + titleSize * 0.9
   const ulY = titleY + titleSize * 0.85 + (subLines.length - 1) * subLH + 14 * u
-  const cardY = Math.min(btn.y - cardH - 14 * u, ulY + 20 * u)
+  const cardY = Math.min(donate.y - cardH - 14 * u, ulY + 20 * u)
   const card = { x: cx - cardW / 2, y: cardY, w: cardW, h: cardH }
 
-  return { L, S, u, cx, cy, R, titleSize, subSize, subLH, subLines, titleY, ulY, card, narrow, perRow, slot, radius, rowH, headH, labelSize, btn }
+  return { L, S, u, cx, cy, R, titleSize, subSize, subLH, subLines, titleY, ulY, card, narrow, perRow, slot, radius, rowH, headH, labelSize, btn, donate }
 }
 
 export default {
@@ -97,8 +101,19 @@ export default {
 
   update(context, dt) {
     t += dt
-    const pressed = context.input.consumeClicks().length > 0 || anyKeyPressed(context.input, KEYS)
-    if (pressed && t >= MIN_TIME) context.goTo('menu')
+    const clicks = context.input.consumeClicks()
+    const keyPressed = anyKeyPressed(context.input, KEYS)
+    if (t < MIN_TIME) return
+    if (clicks.length) {
+      const M = computeLayout(context, context.renderer.getContext())
+      if (clicks.some((c) => pointInRect(c, M.donate))) {
+        context.goTo('donate')
+        return
+      }
+      context.goTo('menu')
+      return
+    }
+    if (keyPressed) context.goTo('menu')
   },
 
   render(context, ctx) {
@@ -229,6 +244,7 @@ export default {
     if (ready > 0) {
       ctx.save()
       ctx.globalAlpha = ready
+      drawDonateLink(ctx, M.donate)
       drawButton(ctx, M.btn, tr('end.backToMenu'), { focused: true, accent: false, time: t })
       ctx.restore()
       drawHint(ctx, M.L, tr(isTouchUI(context) ? 'end.tapHint' : 'end.clickHint'), ready)
@@ -238,4 +254,20 @@ export default {
   },
 
   exit() {},
+}
+
+function drawDonateLink(ctx, rect) {
+  const cx = rect.x + rect.w / 2
+  const cy = rect.y + rect.h / 2
+  const label = tr('end.donate')
+  ctx.save()
+  ctx.fillStyle = UI.ink
+  ctx.globalAlpha *= 0.75
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = font(Math.max(13, rect.h * 0.45), { style: 'italic' })
+  ctx.fillText(label, cx, cy)
+  const tw = ctx.measureText(label).width
+  ctx.restore()
+  drawGuideLine(ctx, cx - tw / 2, cy + rect.h * 0.32, cx + tw / 2, cy + rect.h * 0.32, { alpha: 0.3 })
 }
