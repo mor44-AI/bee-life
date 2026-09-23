@@ -43,6 +43,7 @@ function mainItems() {
     { id: 'settings', label: tr('menu.settings') },
     { id: 'ranking', label: tr('menu.ranking'), discreet: true },
     { id: 'replay', label: tr('menu.replayIntro'), discreet: true },
+    { id: 'donate', label: tr('end.donate'), discreet: true },
   ]
 }
 
@@ -56,17 +57,24 @@ function computeLayout(context) {
   const wide = S.w > S.h * 1.1 && (S.w >= 720 || S.w > S.h * 1.5)
   let btnH = Math.max(minTouch, Math.round(62 * u))
   let gap = Math.round(14 * u)
-  const linkH = wide ? Math.min(minTouch, 48) : minTouch
+  let linkH = wide ? Math.min(minTouch, 48) : minTouch
+  const linkRowGap = Math.round(6 * u)
+  // "Ranking"/"Ver abertura" lado a lado + "Apoiar o projeto" numa segunda linha embaixo.
   if (wide) {
-    // Tela deitada e baixa: encolhe botões (alvo mínimo 44px) para caber título + pilha.
+    // Tela deitada e baixa: encolhe botões e, se ainda faltar espaço, também os links
+    // (alvo mínimo 44px/34px) para caber título + pilha + as duas linhas de links.
     const tSize = Math.min(64, S.w * 0.055, S.h * 0.11)
-    const room = S.h - 32 - tSize * 1.6 - 24 * u - linkH
-    if (btnH * 3 + gap * 2 > room) {
-      gap = Math.max(12, Math.min(gap, room * 0.05))
-      btnH = Math.max(44, (room - gap * 2) / 3)
+    const room = S.h - 32 - tSize * 1.6 - 24 * u
+    if (btnH * 3 + gap * 2 + linkH * 2 + linkRowGap > room) {
+      gap = Math.max(10, Math.min(gap, room * 0.04))
+      const forLinks = room - gap * 2 - linkRowGap
+      // Divide o espaço restante entre 3 botões e 2 links (peso ~1.4x por botão).
+      const unit = forLinks / (3 * 1.4 + 2)
+      btnH = Math.max(44, unit * 1.4)
+      linkH = Math.max(34, unit)
     }
   }
-  const stackH = btnH * 3 + gap * 2 + linkH
+  const stackH = btnH * 3 + gap * 2 + linkH * 2 + linkRowGap
   let plate, titleX, titleY, titleSize, align, btnX, btnY0, btnW
 
   if (wide) {
@@ -98,15 +106,18 @@ function computeLayout(context) {
     const R = Math.max(40, Math.min(S.w * 0.3, avail / 2.6))
     plate = { cx: S.x + S.w / 2, cy: plateTop + avail / 2 + R * 0.08, R }
   }
-  // Links discretos lado a lado logo abaixo da pilha, sem o espaçamento extra dos botões.
+  // "Ranking" e "Ver abertura" lado a lado logo abaixo da pilha, sem o espaçamento extra
+  // dos botões; "Apoiar o projeto" ganha uma segunda linha discreta, largura toda.
   const linkY = btnY0 + 3 * (btnH + gap) - gap
   const linkGap = 8
   const linkW = (btnW - linkGap) / 2
+  const linkY2 = linkY + linkH + linkRowGap
   let linkIndex = 0
   const buttons = mainItems().map((item, i) => {
     if (item.discreet) {
       const k = linkIndex++
-      return { ...item, rect: { x: btnX + k * (linkW + linkGap), y: linkY, w: linkW, h: linkH } }
+      if (k < 2) return { ...item, rect: { x: btnX + k * (linkW + linkGap), y: linkY, w: linkW, h: linkH } }
+      return { ...item, rect: { x: btnX, y: linkY2, w: btnW, h: linkH } }
     }
     return { ...item, rect: { x: btnX, y: btnY0 + i * (btnH + gap), w: btnW, h: btnH } }
   })
@@ -321,6 +332,9 @@ function activate(context, id) {
       break
     case 'replay':
       context.goTo?.('intro', { replay: true })
+      break
+    case 'donate':
+      context.goTo?.('donate')
       break
     case 'confirmNew':
       mode = 'main'
